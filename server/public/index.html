@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Claude Code 사용량</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📊</text></svg>" />
+    <link rel="stylesheet" href="style.css" />
+    <script src="vendor/chart.umd.js" defer></script>
+    <script src="app.js" type="module"></script>
+  </head>
+  <body>
+    <header class="page-header">
+      <div>
+        <h1>Claude Code 사용량</h1>
+        <p class="subtitle"><code>ccusage_report.py</code>로 전송된 보고서 기반 팀 통계</p>
+      </div>
+      <p class="meta" id="meta"></p>
+    </header>
+
+    <form class="filters" id="filters" aria-label="필터">
+      <div class="segmented" role="radiogroup" aria-label="기간">
+        <label><input type="radio" name="preset" value="7" /><span>7일</span></label>
+        <label><input type="radio" name="preset" value="30" checked /><span>30일</span></label>
+        <label><input type="radio" name="preset" value="90" /><span>90일</span></label>
+        <label><input type="radio" name="preset" value="custom" /><span>직접 선택</span></label>
+      </div>
+      <div class="custom-range" id="custom-range" hidden>
+        <input type="date" name="since" aria-label="시작일" />
+        <span aria-hidden="true">–</span>
+        <input type="date" name="until" aria-label="종료일" />
+      </div>
+      <select name="user" aria-label="사용자">
+        <option value="">전체 사용자</option>
+      </select>
+    </form>
+
+    <main id="content">
+      <section class="empty card" id="empty" hidden>
+        <h2>이 기간에 보고된 사용량이 없습니다</h2>
+        <p>Claude Code가 설치된 컴퓨터에서 다음 명령으로 보고서를 보내세요:</p>
+        <pre><code id="empty-command"></code></pre>
+      </section>
+
+      <section class="kpis" id="kpis" aria-label="요약">
+        <div class="kpi hero">
+          <span class="kpi-label">총 토큰</span>
+          <span class="kpi-value" data-kpi="totalTokens">–</span>
+          <span class="kpi-note" data-kpi="range"></span>
+        </div>
+        <div class="kpi"><span class="kpi-label">활성 사용자</span><span class="kpi-value" data-kpi="activeUsers">–</span><span class="kpi-note" data-kpi="activeDays"></span></div>
+        <div class="kpi"><span class="kpi-label">세션</span><span class="kpi-value" data-kpi="sessions">–</span><span class="kpi-note" data-kpi="tokensPerSession"></span></div>
+        <div class="kpi"><span class="kpi-label">캐시 적중률</span><span class="kpi-value" data-kpi="cacheHitRate">–</span><span class="kpi-note">캐시 읽기 / 전체 입력</span></div>
+      </section>
+
+      <section class="grid" id="charts">
+        <figure class="card wide" data-chart="dailyTokens" data-label-header="날짜">
+          <figcaption>
+            <div><h2>일별 토큰</h2><p>하루 토큰 수 (입력·출력·캐시 생성·캐시 읽기), 사용자별 누적</p></div>
+            <div class="card-actions">
+              <div class="segmented small" role="radiogroup" aria-label="차트 종류">
+                <label><input type="radio" name="tokenChartType" value="area" checked /><span>영역</span></label>
+                <label><input type="radio" name="tokenChartType" value="bar" /><span>막대</span></label>
+              </div>
+              <button type="button" class="view-toggle" aria-pressed="false">표</button>
+            </div>
+          </figcaption>
+          <div class="chart-body"><canvas role="img" aria-label="일별 토큰"></canvas></div>
+        </figure>
+
+        <figure class="card wide" data-chart="users" data-label-header="사용자">
+          <figcaption>
+            <div><h2>사용자별 토큰량</h2></div>
+            <button type="button" class="view-toggle" aria-pressed="false">표</button>
+          </figcaption>
+          <div class="chart-body"><canvas role="img" aria-label="사용자별 토큰량"></canvas></div>
+        </figure>
+
+        <figure class="card wide" data-chart="trend" data-label-header="사용자">
+          <figcaption>
+            <div><h2>사용량 추세</h2><p class="trend-description"></p></div>
+            <div class="card-actions">
+              <div class="segmented small" role="radiogroup" aria-label="차트 종류">
+                <label><input type="radio" name="trendChartType" value="line" checked /><span>선</span></label>
+                <label><input type="radio" name="trendChartType" value="area" /><span>영역</span></label>
+              </div>
+              <button type="button" class="view-toggle" aria-pressed="false">표</button>
+            </div>
+          </figcaption>
+          <div class="chart-body"><canvas role="img" aria-label="추세 그룹별 일별 토큰"></canvas></div>
+        </figure>
+
+      </section>
+
+      <section class="trend-groups" id="trend-groups" aria-label="사용량 추세별 사용자">
+        <section class="card table-card" data-trend-group="increasing">
+          <div class="table-head"><h2><span class="swatch"></span>사용량 증가 <span class="count"></span></h2><p class="trend-rule"></p></div>
+          <div class="table-scroll"></div>
+        </section>
+        <section class="card table-card" data-trend-group="steady">
+          <div class="table-head"><h2><span class="swatch"></span>사용량 일정 <span class="count"></span></h2><p class="trend-rule"></p></div>
+          <div class="table-scroll"></div>
+        </section>
+        <section class="card table-card" data-trend-group="decreasing">
+          <div class="table-head"><h2><span class="swatch"></span>사용량 감소 <span class="count"></span></h2><p class="trend-rule"></p></div>
+          <div class="table-scroll"></div>
+        </section>
+      </section>
+
+      <section class="card table-card">
+        <div class="table-head"><h2>사용자</h2><p>선택한 기간의 합계, 모든 머신 합산</p></div>
+        <div class="table-scroll"><table id="users-table"></table></div>
+      </section>
+
+      <section class="card table-card">
+        <div class="table-head"><h2>머신</h2><p>보고한 모든 컴퓨터와 각 컴퓨터의 최근 보고 (위 통계는 사용자의 모든 머신을 합산한 값)</p></div>
+        <div class="table-scroll"><table id="machines-table"></table></div>
+      </section>
+
+    </main>
+
+  </body>
+</html>

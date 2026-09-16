@@ -1,0 +1,158 @@
+import { ObjectId } from 'mongodb';
+import { db } from './db.js';
+import { TOKEN_FIELDS } from './ingest.js';
+
+const USAGE_FIELDS = [...TOKEN_FIELDS, 'totalTokens', 'sessions'];
+
+const sumUsage = () => Object.fromEntries(USAGE_FIELDS.map((f) => [f, { $sum: `$${f}` }]));
+const keepUsage = () => Object.fromEntries(USAGE_FIELDS.map((f) => [f, 1]));
+
+// Usage trend: slope of a least-squares line through each user's daily tokens. A trend line that rises or falls
+// by at least this share of the user's average daily usage over the range counts as increasing / decreasing.
+export const TREND_THRESHOLD = 0.2;
+// Fewer days than this give no meaningful line.
+const TREND_MIN_DAYS = 3;
+
+// Report metadata without the per-day array.
+const REPORT_LIST_PROJECTION = {
+  user: 1, machineId: 1, hostname: 1, receivedAt: 1, generatedAt: 1, timezone: 1, ccusageVersion: 1,
+  since: 1, until: 1, periodTotal: 1,
+};
+
+/**
+ * All dashboard statistics for [since, until] (inclusive, YYYY-MM-DD), optionally for one user.
+ * Everything is derived from per-day totals; usage from all of a user's machines is summed.
+ */
+export async function getStats({ since, until, user }) {
+  const userMatch = user ? { user } : {};
+  const dailyMatch = { $match: { ...userMatch, date: { $gte: since, $lte: until } } };
+  const daily = db.collection('daily');
+
+  const [totals, byDateUser, users, machines] = await Promise.all([
+    daily
+      .aggregate([
+        dailyMatch,
+        {
+          $group: {
+            _id: null,
+            ...sumUsage(),
+            users: { $addToSet: '$user' },
+            dates: { $addToSet: '$date' },
+          },
+        },
+        { $project: { _id: 0, ...keepUsage(), activeUsers: { $size: '$users' }, activeDays: { $size: '$dates' } } },
+      ])
+      .toArray(),
+    daily
+      .aggregate([
+        dailyMatch,
+        { $group: { _id: { date: '$date', user: '$user' }, totalTokens: { $sum: '$totalTokens' } } },
+        { $project: { _id: 0, date: '$_id.date', user: '$_id.user', totalTokens: 1 } },
+        { $sort: { date: 1, user: 1 } },
+      ])
+      .toArray(),
+    daily
+      .aggregate([
+        dailyMatch,
+        { $group: { _id: '$user', ...sumUsage(), dates: { $addToSet: '$date' }, machines: { $addToSet: '$machineId' }, hostnames: { $addToSet: '$hostname' }, lastDate: { $max: '$date' } } },
+        { $project: { _id: 0, user: '$_id', ...keepUsage(), activeDays: { $size: '$dates' }, machines: { $size: '$machines' }, hostnames: 1, lastDate: 1 } },
+        { $sort: { totalTokens: -1 } },
+      ])
+      .toArray(),
+    db
+      .collection('reports')
+      .aggregate([
+        { $match: userMatch },
+        { $sort: { receivedAt: -1 } },
+        { $project: REPORT_LIST_PROJECTION },
+        { $group: { _id: { user: '$user', machineId: '$machineId' }, last: { $first: '$$ROOT' }, count: { $sum: 1 } } },
+        { $replaceRoot: { newRoot: { $mergeObjects: ['$last', { reports: '$count' }] } } },
+        { $sort: { user: 1, receivedAt: -1 } },
+      ])
+      .toArray(),
+  ]);
+
+  const t = totals[0] ?? { ...Object.fromEntries(USAGE_FIELDS.map((f) => [f, 0])), activeUsers: 0, activeDays: 0 };
+  const cacheBase = t.cacheReadTokens + t.cacheCreationTokens + t.inputTokens;
+
+  return {
+    range: { since, until },
+    user: user ?? null,
+    totals: {
+      ...t,
+      cacheHitRate: cacheBase ? t.cacheReadTokens / cacheBase : 0,
+    },
+    byDateUser,
+    users,
+    machines,
+    trend: userTrends(byDateUser, since, until),
+  };
+}
+
+/** Every day of [since, until] as YYYY-MM-DD. */
+export function dateRange(since, until) {
+  const DAY = 86_400_000;
+  const out = [];
+  for (let t = Date.parse(`${since}T00:00:00Z`); t <= Date.parse(`${until}T00:00:00Z`); t += DAY) {
+    out.push(new Date(t).toISOString().slice(0, 10));
+  }
+  return out;
+}
+
+/**
+ * Least-squares line through daily values (x = day index 0..n-1). Returns the slope per day and the line's
+ * rise over the whole range relative to the average day (`change`, e.g. 0.35 = +35%).
+ */
+export function linearTrend(values) {
+  const n = values.length;
+  const mean = values.reduce((a, b) => a + b, 0) / n;
+  const xMean = (n - 1) / 2;
+  let sxy = 0;
+  let sxx = 0;
+  values.forEach((y, x) => {
+    sxy += (x - xMean) * (y - mean);
+    sxx += (x - xMean) ** 2;
+  });
+  const slope = sxx ? sxy / sxx : 0;
+  return { slope, mean, intercept: mean - slope * xMean, change: mean ? (slope * (n - 1)) / mean : 0 };
+}
+
+/** Classifies each user by the trend line through their daily tokens (days without usage count as 0). */
+function userTrends(byDateUser, since, until) {
+  const dates = dateRange(since, until);
+  if (dates.length < TREND_MIN_DAYS) return null;
+  const index = new Map(dates.map((d, i) => [d, i]));
+  const series = new Map();
+  for (const row of byDateUser) {
+    if (!series.has(row.user)) series.set(row.user, new Array(dates.length).fill(0));
+    series.get(row.user)[index.get(row.date)] += row.totalTokens;
+  }
+  const users = [...series.entries()]
+    .map(([user, values]) => {
+      const { slope, mean, change } = linearTrend(values);
+      const group = change >= TREND_THRESHOLD ? 'increasing' : change <= -TREND_THRESHOLD ? 'decreasing' : 'steady';
+      return { user, mean, slope, changePct: change * 100, group };
+    })
+    .sort((a, b) => b.changePct - a.changePct || a.user.localeCompare(b.user));
+  return { threshold: TREND_THRESHOLD, since, until, days: dates.length, users };
+}
+
+export async function listReports({ user, machineId, limit }) {
+  const match = { ...(user ? { user } : {}), ...(machineId ? { machineId } : {}) };
+  return db.collection('reports').find(match, { projection: REPORT_LIST_PROJECTION }).sort({ receivedAt: -1 }).limit(limit).toArray();
+}
+
+export async function getReport(id) {
+  if (!ObjectId.isValid(id)) return null;
+  return db.collection('reports').findOne({ _id: new ObjectId(id) });
+}
+
+/** Every user that ever reported, by all-time tokens - the stable order the dashboard assigns colors from. */
+export async function listUsers() {
+  const [ranked, all] = await Promise.all([
+    db.collection('daily').aggregate([{ $group: { _id: '$user', totalTokens: { $sum: '$totalTokens' } } }, { $sort: { totalTokens: -1, _id: 1 } }]).toArray(),
+    db.collection('reports').distinct('user'),
+  ]);
+  const names = ranked.map((r) => r._id);
+  return [...names, ...all.filter((u) => !names.includes(u)).sort((a, b) => a.localeCompare(b))];
+}

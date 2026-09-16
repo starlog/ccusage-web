@@ -1,0 +1,491 @@
+:root {
+  color-scheme: light;
+  --page: #f9f9f7;
+  --surface: #fcfcfb;
+  --text-primary: #0b0b0b;
+  --text-secondary: #52514e;
+  --text-muted: #898781;
+  --grid: #e1e0d9;
+  --axis: #c3c2b7;
+  --border: rgba(11, 11, 11, 0.1);
+  --wash: rgba(11, 11, 11, 0.04);
+  --accent: #2a78d6;
+  --other: #b5b3ab;
+
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --series-3: #1baf7a;
+  --series-4: #eda100;
+  --series-5: #e87ba4;
+  --series-6: #008300;
+  --series-7: #4a3aa7;
+  --series-8: #e34948;
+
+  --font: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --radius: 10px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+    --page: #0d0d0d;
+    --surface: #1a1a19;
+    --text-primary: #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted: #898781;
+    --grid: #2c2c2a;
+    --axis: #383835;
+    --border: rgba(255, 255, 255, 0.1);
+    --wash: rgba(255, 255, 255, 0.05);
+    --accent: #3987e5;
+    --other: #6b6a65;
+
+    --series-1: #3987e5;
+    --series-2: #d95926;
+    --series-3: #199e70;
+    --series-4: #c98500;
+    --series-5: #d55181;
+    --series-6: #008300;
+    --series-7: #9085e9;
+    --series-8: #e66767;
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #0d0d0d;
+  --surface: #1a1a19;
+  --text-primary: #ffffff;
+  --text-secondary: #c3c2b7;
+  --text-muted: #898781;
+  --grid: #2c2c2a;
+  --axis: #383835;
+  --border: rgba(255, 255, 255, 0.1);
+  --wash: rgba(255, 255, 255, 0.05);
+  --accent: #3987e5;
+  --other: #6b6a65;
+
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --series-3: #199e70;
+  --series-4: #c98500;
+  --series-5: #d55181;
+  --series-6: #008300;
+  --series-7: #9085e9;
+  --series-8: #e66767;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+body {
+  margin: 0 auto;
+  max-width: 1280px;
+  padding: 24px 24px 64px;
+  background: var(--page);
+  color: var(--text-primary);
+  font: 14px/1.45 var(--font);
+}
+
+h1,
+h2 {
+  margin: 0;
+  font-weight: 600;
+}
+
+h1 {
+  font-size: 22px;
+}
+
+h2 {
+  font-size: 15px;
+}
+
+p {
+  margin: 0;
+}
+
+code {
+  font-size: 0.92em;
+}
+
+.page-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  justify-content: space-between;
+  gap: 8px 24px;
+  margin-bottom: 20px;
+}
+
+.subtitle,
+.meta,
+figcaption p,
+.table-head p {
+  color: var(--text-secondary);
+}
+
+.meta {
+  font-size: 13px;
+}
+
+/* ---------------------------------------------------------------- filters */
+
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin-bottom: 20px;
+}
+
+.segmented {
+  display: inline-flex;
+  padding: 3px;
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+
+.segmented label {
+  position: relative;
+}
+
+.segmented input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.segmented span {
+  display: block;
+  padding: 5px 12px;
+  border-radius: 6px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  user-select: none;
+}
+
+.segmented span:hover {
+  background: var(--wash);
+}
+
+.segmented input:checked + span {
+  background: var(--text-primary);
+  color: var(--surface);
+  font-weight: 600;
+}
+
+.segmented input:focus-visible + span {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.custom-range {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-muted);
+}
+
+.filters input[type="date"],
+.filters select {
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text-primary);
+  font: inherit;
+}
+
+.filters select {
+  min-width: 220px;
+  max-width: 100%;
+}
+
+/* ---------------------------------------------------------------- layout */
+
+#content {
+  display: grid;
+  gap: 16px;
+  transition: opacity 0.15s;
+}
+
+body.loading #content {
+  opacity: 0.55;
+}
+
+.card {
+  min-width: 0;
+  margin: 0;
+  padding: 16px 18px;
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: 0 0 0 1px var(--border);
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.grid .wide {
+  grid-column: 1 / -1;
+}
+
+.empty pre {
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  overflow-x: auto;
+  border-radius: 8px;
+  background: var(--wash);
+}
+
+.empty p {
+  margin-top: 6px;
+  color: var(--text-secondary);
+}
+
+/* ---------------------------------------------------------------- KPIs */
+
+.kpis {
+  display: grid;
+  grid-template-columns: 1.6fr repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.kpi {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding: 14px 16px;
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: 0 0 0 1px var(--border);
+}
+
+.kpi-label {
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.kpi-value {
+  font-size: 24px;
+  font-weight: 600;
+  line-height: 1.25;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.kpi.hero .kpi-value {
+  font-size: 48px;
+  line-height: 1.1;
+}
+
+.kpi-note {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+/* ---------------------------------------------------------------- chart cards */
+
+figcaption {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+figcaption p,
+.table-head p {
+  font-size: 13px;
+}
+
+.card-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+}
+
+.segmented.small {
+  padding: 2px;
+}
+
+.segmented.small span {
+  padding: 3px 10px;
+  font-size: 12px;
+}
+
+.view-toggle {
+  flex: none;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.view-toggle:hover {
+  background: var(--wash);
+}
+
+.view-toggle[aria-pressed="true"] {
+  background: var(--text-primary);
+  color: var(--surface);
+}
+
+.chart-body {
+  position: relative;
+  height: 300px;
+}
+
+.wide .chart-body {
+  height: 320px;
+}
+
+.chart-body.as-table {
+  height: auto !important;
+  max-height: 320px;
+  overflow: auto;
+}
+
+.chart-body.as-table canvas {
+  display: none;
+}
+
+/* ---------------------------------------------------------------- usage trend groups */
+
+.trend-groups {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.trend-groups h2 .count {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.trend-groups .empty-note {
+  padding: 8px 0;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+@media (max-width: 1100px) {
+  .trend-groups {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* ---------------------------------------------------------------- tables */
+
+.table-head {
+  margin-bottom: 10px;
+}
+
+.table-scroll {
+  max-height: 520px;
+  overflow: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+th,
+td {
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--grid);
+  text-align: left;
+  white-space: nowrap;
+}
+
+th {
+  position: sticky;
+  top: 0;
+  background: var(--surface);
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+td.num,
+th.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+td.muted {
+  color: var(--text-muted);
+}
+
+tbody tr:hover {
+  background: var(--wash);
+}
+
+tr.total td {
+  font-weight: 600;
+}
+
+.swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-right: 8px;
+  border-radius: 2px;
+  vertical-align: -1px;
+}
+
+@media (max-width: 1100px) {
+  .kpis {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .kpi.hero {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 760px) {
+  body {
+    padding: 16px 16px 48px;
+  }
+
+  .grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .kpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .kpi.hero .kpi-value {
+    font-size: 40px;
+  }
+
+  .kpi:last-child {
+    grid-column: 1 / -1;
+  }
+
+  .filters select {
+    min-width: 0;
+    flex: 1 1 100%;
+  }
+}
