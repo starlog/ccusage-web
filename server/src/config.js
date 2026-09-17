@@ -1,3 +1,9 @@
+import fs from 'node:fs';
+
+// Local runs read .env from the working directory. Values already in the environment (set by the deployment
+// platform) are never overridden.
+if (fs.existsSync('.env')) process.loadEnvFile('.env');
+
 // Empty values count as unset (`||`), so a blank line in .env never yields port 0 or an empty URI.
 const env = (name) => process.env[name] || undefined;
 
@@ -11,13 +17,16 @@ function baseUrl(value) {
   return value?.trim().replace(/\/+$/, '') || undefined;
 }
 
+// MONGODB_URI is the documented name; MONGO_URL is accepted too.
+const mongoUri = env('MONGODB_URI') ?? env('MONGO_URL');
+
 export const config = {
   port: Number(env('PORT') ?? 3000),
   host: env('HOST') ?? '0.0.0.0',
-  // Required: no built-in default, so a missing setting fails loudly instead of silently using localhost.
-  mongoUri: env('MONGODB_URI'),
-  // MONGODB_DB wins, then the database in MONGODB_URI, then cc_usage.
-  mongoDb: env('MONGODB_DB') ?? databaseFromUri(env('MONGODB_URI')) ?? 'cc_usage',
+  // No built-in default, so a missing setting is reported instead of silently using localhost.
+  mongoUri,
+  // MONGODB_DB wins, then the database in the connection string, then cc_usage.
+  mongoDb: env('MONGODB_DB') ?? databaseFromUri(mongoUri) ?? 'cc_usage',
   // When set, POST /api/reports requires `Authorization: Bearer <token>`.
   ingestToken: env('INGEST_TOKEN') ?? null,
   // Address clients should use (e.g. https://tools.example.com/c/cc-usage). Shown in the setup guide when set;
@@ -27,11 +36,12 @@ export const config = {
   reportTimezone: env('REPORT_TIMEZONE') ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
 };
 
+export const MISSING_MONGO_URI =
+  'MONGODB_URI (or MONGO_URL) is not set. Set it in the deployment environment or in .env (e.g. mongodb://mongodb:27017/cc_usage).';
+
+/** Settings that make the server unable to start at all. */
 export function assertConfig() {
   if (config.publicUrl && !/^https?:\/\/[^/\s]+/.test(config.publicUrl)) {
     throw new Error(`PUBLIC_URL must start with http:// or https:// (got ${config.publicUrl}).`);
-  }
-  if (!config.mongoUri) {
-    throw new Error('MONGODB_URI is not set. Copy .env.example to .env and set it (e.g. mongodb://shared-mongo:27017/cc_usage).');
   }
 }

@@ -6,13 +6,13 @@
   "type": "module",
   "main": "server/src/server.js",
   "engines": {
-    "node": ">=22.9"
+    "node": ">=20.19"
   },
   "scripts": {
-    "start": "node --env-file-if-exists=.env server/src/server.js",
-    "dev": "node --env-file-if-exists=.env --watch server/src/server.js",
-    "seed:sample": "node --env-file-if-exists=.env server/scripts/seed-sample.js",
-    "seed:clean": "node --env-file-if-exists=.env server/scripts/seed-sample.js --clean"
+    "start": "node server/src/server.js",
+    "dev": "node --watch server/src/server.js",
+    "seed:sample": "node server/scripts/seed-sample.js",
+    "seed:clean": "node server/scripts/seed-sample.js --clean"
   },
   "dependencies": {
     "chart.js": "^4.5.1",

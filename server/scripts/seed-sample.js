@@ -13,7 +13,7 @@
  */
 import { parseArgs } from 'node:util';
 import { MongoClient } from 'mongodb';
-import { assertConfig, config } from '../src/config.js';
+import { config, MISSING_MONGO_URI } from '../src/config.js';
 import { clientOptions } from '../src/db.js';
 
 const SAMPLE_DOMAIN = 'sample.local';
@@ -29,7 +29,7 @@ const { values: args } = parseArgs({
 });
 
 if (args.clean) {
-  assertConfig();
+  if (!config.mongoUri) throw new Error(MISSING_MONGO_URI);
   const client = await new MongoClient(config.mongoUri, clientOptions).connect();
   try {
     const db = client.db(config.mongoDb);

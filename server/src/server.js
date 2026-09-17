@@ -5,9 +5,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
 import { clientPackage, packagePath } from './client-package.js';
-import { config } from './config.js';
+import { assertConfig, config, MISSING_MONGO_URI } from './config.js';
 import { dayCount, isCalendarDate } from './dates.js';
-import { close, connect, ping } from './db.js';
+import { close, connectWithRetry, isReady, ping } from './db.js';
 import { buildWorkbook } from './export.js';
 import { isLoopback, lanAddresses } from './network.js';
 import { parseReport, storeReport, ValidationError } from './ingest.js';
@@ -48,9 +48,16 @@ function requireIngestToken(req, res, next) {
 
 const asyncRoute = (fn) => (req, res, next) => fn(req, res).catch(next);
 
+/** Routes that read or write MongoDB answer 503 until the background connection is established. */
+function requireDb(_req, res, next) {
+  if (isReady()) return next();
+  res.status(503).json({ error: config.mongoUri ? 'database not connected yet' : MISSING_MONGO_URI });
+}
+
 app.post(
   '/api/reports',
   requireIngestToken,
+  requireDb,
   express.json({ limit: '10mb' }),
   asyncRoute(async (req, res) => {
     const stored = await storeReport(parseReport(req.body));
@@ -75,6 +82,7 @@ function rangeQuery(req, res) {
 
 app.get(
   '/api/stats',
+  requireDb,
   asyncRoute(async (req, res) => {
     const range = rangeQuery(req, res);
     if (range) res.json(await getStats(range));
@@ -84,6 +92,7 @@ app.get(
 // Detailed multi-sheet Excel report for the same filters as the dashboard.
 app.get(
   '/api/export.xlsx',
+  requireDb,
   asyncRoute(async (req, res) => {
     const range = rangeQuery(req, res);
     if (!range) return;
@@ -98,6 +107,7 @@ app.get(
 
 app.get(
   '/api/reports',
+  requireDb,
   asyncRoute(async (req, res) => {
     const text = (v) => (typeof v === 'string' && v ? v : undefined);
     const limit = Math.min(Math.max(Number.parseInt(req.query.limit, 10) || 50, 1), 500);
@@ -107,6 +117,7 @@ app.get(
 
 app.get(
   '/api/reports/:id',
+  requireDb,
   asyncRoute(async (req, res) => {
     const report = await getReport(req.params.id);
     if (!report) return res.status(404).json({ error: 'report not found' });
@@ -114,10 +125,11 @@ app.get(
   }),
 );
 
-app.get('/api/users', asyncRoute(async (_req, res) => res.json(await listUsers())));
+app.get('/api/users', requireDb, asyncRoute(async (_req, res) => res.json(await listUsers())));
 
 app.get(
   '/api/health',
+  requireDb,
   asyncRoute(async (_req, res) => {
     await ping();
     res.json({ ok: true });
@@ -177,10 +189,12 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'internal error' });
 });
 
-await connect();
+assertConfig();
+// Listen first so /health answers right away; the database connects (and retries) in the background.
 const server = app.listen(config.port, config.host, () => {
   console.log(`cc-usage server listening on ${config.host}:${config.port} (db ${config.mongoDb}` +
     `${config.ingestToken ? ', ingest token required' : ''})`);
+  connectWithRetry();
 });
 
 for (const signal of ['SIGINT', 'SIGTERM']) {

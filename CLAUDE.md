@@ -9,7 +9,7 @@ Team Claude Code usage tracker; the client and server talk only over HTTP:
 - `client/` — Node.js client (`cc-usage` bin) run on each person's machine, installed with one `npx <server>/client/…tgz setup` line. Uploads **aggregate** numbers and registers a daily upload. (The earlier Python client was removed; the Node client uses the same settings file, identity and payload.)
 - `server/` — Node.js (ESM, Express 5, official `mongodb` driver) API + static dashboard (vanilla JS + Chart.js, no build step). UI text is Korean. The deployable app: `package.json`/lock live at the **repo root** and `npm start` runs `server/src/server.js`.
 
-Deployment target is Docker Manager: Nginx reverse proxy under a sub-path `/c/<project>/`, port 3000, `GET /health`, env from `.env.example`. See `IMPROVEMENTS.md` for the review that set this up.
+Deployment target is Docker Manager: Nginx reverse proxy under a sub-path `/c/<project>/`, port 3000, `GET /health`, env from `.env.example`. Docker Manager generated `Dockerfile` (**node:20-alpine**, `npm ci` + `npm start`), `.dockerignore` and `.github/workflows/deploy.yml` — don't edit them; keep the server runnable on Node 20.19 (no Node-22-only flags or APIs). See `IMPROVEMENTS.md` for the review that set this up.
 
 There is no test suite, linter, or build. Verify changes by syntax-checking and exercising the running server (see Commands).
 
@@ -18,7 +18,7 @@ There is no test suite, linter, or build. Verify changes by syntax-checking and 
 ```bash
 # Server — run from the repo root (MongoDB is the docker container named `mongodb` on localhost:27017, no auth)
 npm install
-npm start                 # reads .env; local .env uses PORT=3200 and MONGODB_URI=mongodb://localhost:27017 (default port is 3000)
+npm start                 # config.js loads .env (process.loadEnvFile, never overrides real env); local .env uses PORT=3200 and localhost MongoDB (default port is 3000)
 npm run dev               # node --watch
 npm run seed:sample       # 40 fake users (@sample.local), 90 days, weekly 7-day uploads through POST /api/reports
 npm run seed:clean        # delete only @sample.local records
@@ -40,7 +40,7 @@ curl -s "localhost:3200/api/stats?since=2026-08-18&until=2026-09-16" | jq .trend
 
 The server does not auto-reload in `npm start`; restart after editing `server/src/*`. Files in `server/public/` are served statically (just reload the browser).
 
-Server env vars (all in `.env.example`, nothing else is read): `MONGODB_URI` (required, no localhost default), `MONGODB_DB` (else the URI's db name, else `cc_usage`), `PORT` (3000), `HOST` (0.0.0.0), `INGEST_TOKEN`, `PUBLIC_URL` (address clients should use; validated as http(s)), `REPORT_TIMEZONE`. Empty values count as unset.
+Server env vars (all in `.env.example`, nothing else is read): `MONGODB_URI` or `MONGO_URL` (no localhost default; deploy value `mongodb://mongodb:27017/cc_usage` on docker-manager-net), `MONGODB_DB` (else the URI's db name, else `cc_usage`), `PORT` (3000), `HOST` (0.0.0.0), `INGEST_TOKEN`, `PUBLIC_URL` (address clients should use; validated as http(s)), `REPORT_TIMEZONE`. Empty values count as unset.
 
 ## Node client (`client/`)
 
@@ -54,7 +54,7 @@ Server env vars (all in `.env.example`, nothing else is read): `MONGODB_URI` (re
 
 ## Server architecture (`server/src`)
 
-- `config.js` — env parsing and `assertConfig()` (fails fast without `MONGODB_URI`). `dates.js` — `isCalendarDate`, `dayCount`, `dateRange`, shared by ingest, stats and server.
+- `config.js` — loads `.env`, parses env; `assertConfig()` only rejects an invalid `PUBLIC_URL`. `db.js` — `connectWithRetry()` runs after `listen` (retries 2 s→30 s) so `/health` passes while MongoDB is down or unset; `requireDb` in server.js answers 503 on DB routes until `isReady()`. `dates.js` — `isCalendarDate`, `dayCount`, `dateRange`, shared by ingest, stats and server.
 - `ingest.js` — `parseReport` validates and normalizes the body; accepts schemaVersion 1–3 but **silently discards** cost and any detail sections from older clients. Counts must be safe integers, `cacheHitRate` 0–1, dates real calendar dates, windows ≤ 5000 days, strings without control characters. `storeReport` writes three collections:
   - `reports`: every submission kept as history (period total + daily totals).
   - `users`: latest display name per user (upserted only when a report carries a name, so a machine without a name never erases it). Stats attach `name` to users/machines/trend rows; the dashboard labels charts by name and keeps the email id for identity, color and filtering (`displayName` / `fullLabel` in `app.js`).

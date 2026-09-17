@@ -15,7 +15,7 @@
 
 ## 기술 스택
 
-- **언어**: JavaScript (Node.js 22.9+, ESM)
+- **언어**: JavaScript (Node.js 20.19+, ESM)
 - **프레임워크**: Express 5
 - **DB**: MongoDB (공식 `mongodb` 드라이버)
 - **기타**: Chart.js(대시보드 차트), ExcelJS(엑셀 보고서), ccusage 20.0.20(클라이언트에 버전 고정)
@@ -24,7 +24,7 @@
 
 ### 사전 요구사항
 
-- Node.js 22.9 이상 (서버)
+- Node.js 20.19 이상 (서버, 배포 이미지는 node:20-alpine)
 - MongoDB (Docker Manager 공유 서비스 또는 로컬)
 - 클라이언트를 쓰는 컴퓨터: Node.js 20 이상
 
@@ -46,7 +46,7 @@ cp .env.example .env
 
 | 변수 | 필수 | 설명 |
 |------|------|------|
-| `MONGODB_URI` | 예 | MongoDB 연결 문자열. 공유 서비스 예: `mongodb://shared-mongo:27017/cc_usage`, 로컬: `mongodb://localhost:27017` |
+| `MONGODB_URI` | 예 | MongoDB 연결 문자열 (`MONGO_URL` 이름도 사용 가능). 배포: `mongodb://mongodb:27017/cc_usage`, 로컬: `mongodb://localhost:27017/<DB 이름>` |
 | `MONGODB_DB` | 아니오 | DB 이름. 비우면 `MONGODB_URI`의 DB 이름, 그것도 없으면 `cc_usage` |
 | `PORT` | 아니오 | 서버 포트 (기본 3000) |
 | `HOST` | 아니오 | 바인딩 주소 (기본 0.0.0.0) |
@@ -57,7 +57,7 @@ cp .env.example .env
 ### 실행
 
 ```bash
-npm start      # 운영 실행
+npm start      # 운영 실행 (.env가 있으면 읽고, 이미 설정된 환경변수는 덮어쓰지 않음)
 npm run dev    # 코드 변경 시 자동 재시작
 ```
 
@@ -104,7 +104,7 @@ cc-usage uninstall   # 자동 전송 해제와 설치본 삭제 (--purge는 설�
 ## 주의사항
 
 - **Nginx 서브패스 환경**: Docker Manager에서는 `/c/프로젝트명/` 아래로 서비스됩니다. 대시보드의 리소스와 API 호출은 상대 경로를 쓰므로 절대 경로(`/`로 시작)를 추가하지 마세요. 설치 명령은 접속한 주소(서브패스 포함)를 기준으로 만들어집니다.
-- **MongoDB 연결 필수**: `MONGODB_URI`가 없으면 서버가 시작하지 않습니다. 컨테이너 안에서 호스트의 MongoDB에 붙을 때는 `localhost` 대신 `host.docker.internal`을 쓰세요.
+- **MongoDB 연결**: 서버는 포트를 먼저 열고 MongoDB에는 백그라운드에서 연결합니다(실패 시 2초~30초 간격으로 재시도). 연결 전까지 `/health`는 200, DB가 필요한 API와 `/api/health`는 503입니다. `MONGODB_URI`(또는 `MONGO_URL`)가 없으면 API가 설정 방법을 담은 503을 돌려줍니다. 컨테이너 안에서 호스트의 MongoDB에 붙을 때는 `localhost` 대신 `host.docker.internal`을 쓰세요.
 - **업로드 인증**: 운영 환경에서는 `INGEST_TOKEN`을 반드시 설정하고, 서버는 HTTPS로만 노출하세요.
 - **`.env` 파일을 Git에 커밋하지 마세요.** (`.gitignore`에 포함되어 있습니다)
 - **클라이언트 패키지**: 서버가 `client/` 폴더를 `npm pack`으로 묶어 제공하므로 배포 이미지에 `client/` 폴더와 npm이 있어야 합니다. 패키지 파일은 다시 만들 수 있는 캐시라 영속 볼륨이 필요 없습니다.
