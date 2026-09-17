@@ -1,4 +1,5 @@
 import { timingSafeEqual } from 'node:crypto';
+import os from 'node:os';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -8,6 +9,7 @@ import { config } from './config.js';
 import { dayCount, isCalendarDate } from './dates.js';
 import { close, connect, ping } from './db.js';
 import { buildWorkbook } from './export.js';
+import { isLoopback, lanAddresses } from './network.js';
 import { parseReport, storeReport, ValidationError } from './ingest.js';
 import { getReport, getStats, listReports, listUsers } from './stats.js';
 
@@ -122,10 +124,12 @@ app.get(
   }),
 );
 
-// Setup guide and client: whether uploads need a token (never the token itself) and the current client package.
+// Setup guide and client: whether uploads need a token (never the token itself), the current client package, and
+// which server address to show. Network addresses are only shared with a browser on the server machine itself (the
+// case where the page was opened as localhost and the guide needs an address other computers can reach).
 app.get(
   '/api/client-info',
-  asyncRoute(async (_req, res) => {
+  asyncRoute(async (req, res) => {
     let client = null;
     try {
       const pkg = await clientPackage();
@@ -133,7 +137,11 @@ app.get(
     } catch (error) {
       console.error(`[client] packaging failed: ${error.message}`);
     }
-    res.json({ tokenRequired: Boolean(config.ingestToken), client });
+    const server = {
+      publicUrl: config.publicUrl ?? null,
+      ...(isLoopback(req.ip) ? { addresses: lanAddresses(), hostname: os.hostname() } : {}),
+    };
+    res.json({ tokenRequired: Boolean(config.ingestToken), client, server });
   }),
 );
 

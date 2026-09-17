@@ -134,6 +134,12 @@
 
       <div class="dialog-body">
         <div class="setup-fields">
+          <label class="setup-server">
+            <span>서버 주소</span>
+            <input id="setup-server" type="text" inputmode="url" list="setup-server-options" autocomplete="off" spellcheck="false" />
+            <datalist id="setup-server-options"></datalist>
+          </label>
+          <p class="field-note setup-server-note" id="setup-server-note">서버 주소를 확인하는 중입니다…</p>
           <label>
             <span>사용자 ID (이메일)</span>
             <input id="setup-user" type="text" inputmode="email" placeholder="you@example.com" autocomplete="off" spellcheck="false" />
@@ -155,7 +161,6 @@
             <p>터미널(Windows는 PowerShell)에 붙여넣으면 설정 저장, 이 컴퓨터에 설치, 최근 7일 전송, 매일 자동 전송 등록까지 한 번에 끝납니다. 사용하는 컴퓨터마다 한 번씩 실행하세요.</p>
             <div class="code-block" data-code="setup"></div>
             <p class="hint" id="setup-token-hint" hidden>이 서버는 업로드 토큰이 필요합니다. 관리자에게 받은 토큰으로 <code>YOUR_TOKEN</code>을 바꾸세요.</p>
-            <p class="hint" id="setup-origin-hint" hidden>지금 <code>localhost</code>로 접속 중입니다. 다른 컴퓨터에서는 <code>localhost</code> 대신 이 서버의 주소를 넣으세요.</p>
             <p class="hint">자동 전송은 매일 13:00에 macOS는 launchd, Linux는 cron, Windows는 작업 스케줄러로 실행됩니다. 시각은 <code>--time 09:30</code>으로 바꾸고, 자동 전송 없이 설치만 하려면 <code>--no-schedule</code>을 붙이세요(필요할 때 <code>cc-usage send</code>로 보냅니다).</p>
             <p class="hint">옵션 없이 <code>setup</code>까지만 입력하면 서버 주소, 사용자 ID, 이름, 자동 전송 시각을 하나씩 물어보는 방식으로 설정할 수도 있습니다.</p>
           </li>

@@ -559,9 +559,61 @@ const USER_ID_RE = /^[\w.%+@-]{1,200}$/; // same rule as the client and the serv
 /** Quotes a value for a POSIX shell only when needed (e.g. a Korean name with spaces). */
 const shellQuote = (value) => (/^[\w@.%+\-/:=]+$/.test(value) ? value : `'${value.replace(/'/g, `'\\''`)}'`);
 
-function setupCommands({ user, name, tokenRequired, client }) {
-  // Base URL of this dashboard, including a reverse-proxy sub-path such as /c/cc-usage (no trailing slash).
-  const origin = new URL('.', location.href).href.replace(/\/+$/, '');
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
+const isLoopbackHost = (host) => LOOPBACK_HOSTS.has(host) || host.startsWith('127.');
+
+/** This dashboard's URL with another host (same protocol, port and reverse-proxy sub-path), no trailing slash. */
+function dashboardUrlWithHost(host) {
+  const url = new URL('.', location.href);
+  if (host) url.hostname = host;
+  return url.href.replace(/\/+$/, '');
+}
+
+/**
+ * Server addresses to offer in the setup guide, best first:
+ * 1. PUBLIC_URL configured on the server,
+ * 2. when the page was opened as localhost, this machine's network addresses (reported only to local browsers),
+ * 3. the address the dashboard was opened with.
+ */
+function serverCandidates(server) {
+  const current = dashboardUrlWithHost();
+  const local = isLoopbackHost(location.hostname);
+  const candidates = [];
+  if (server?.publicUrl) candidates.push({ url: server.publicUrl, source: 'public', label: '서버 설정(PUBLIC_URL)' });
+  if (local) {
+    for (const address of server?.addresses ?? []) candidates.push({ url: dashboardUrlWithHost(address), source: 'network', label: '네트워크 주소' });
+    if (server?.hostname) candidates.push({ url: dashboardUrlWithHost(server.hostname), source: 'network', label: '호스트 이름' });
+  }
+  candidates.push({ url: current, source: local ? 'loopback' : 'current', label: local ? '이 컴퓨터에서만 접속 가능' : '지금 접속한 주소' });
+  const seen = new Set();
+  return candidates.filter((c) => !seen.has(c.url) && seen.add(c.url));
+}
+
+/** Explains where the shown server address came from, or what is wrong with a typed one. */
+function serverNote(url, candidates) {
+  if (!/^https?:\/\/[^/\s]+/.test(url)) return { warning: true, text: 'http:// 또는 https://로 시작하는 서버 주소를 입력하세요.' };
+  const host = new URL(url).hostname;
+  const match = candidates.find((c) => c.url === url);
+  if (isLoopbackHost(host)) {
+    return { warning: true, text: `${host}는 서버 컴퓨터에서만 쓸 수 있습니다. 다른 컴퓨터에서 설치하려면 그 컴퓨터에서 접속할 수 있는 서버 주소로 바꾸세요.` };
+  }
+  switch (match?.source) {
+    case 'public':
+      return { text: '서버에 설정된 주소(PUBLIC_URL)입니다.' };
+    case 'network':
+      return {
+        text: `이 대시보드를 서버 컴퓨터에서(${location.hostname}) 열어, 다른 컴퓨터가 접속할 수 있는 ${match.label}로 바꿔 표시했습니다. 다른 주소를 쓰려면 칸을 눌러 고르거나 직접 입력하세요.`,
+      };
+    case 'current':
+      return { text: '지금 이 대시보드에 접속한 주소입니다. 다른 컴퓨터에서 이 주소로 접속할 수 없다면 직접 바꾸세요.' };
+    default:
+      return { text: '직접 입력한 주소로 명령을 만들었습니다.' };
+  }
+}
+
+function setupCommands({ user, name, tokenRequired, client, serverUrl }) {
+  // serverUrl: base URL of this server as other computers reach it, including a reverse-proxy sub-path.
+  const origin = serverUrl.replace(/\/+$/, '');
   const setup = client === undefined
     ? '설치 명령을 불러오는 중입니다…'
     : client
@@ -623,7 +675,19 @@ function initSetupDialog() {
   const nameInput = $('#setup-name');
   const note = $('#setup-user-note');
   const defaultNote = note.innerHTML;
-  const info = { tokenRequired: false, client: undefined }; // undefined: still loading, null: unavailable
+  const serverInput = $('#setup-server');
+  const serverOptions = $('#setup-server-options');
+  const serverNoteEl = $('#setup-server-note');
+  const info = { tokenRequired: false, client: undefined, server: null }; // client undefined: loading, null: unavailable
+  let candidates = serverCandidates(null);
+  let serverEdited = false;
+  serverInput.value = candidates[0].url;
+
+  const fillServerCandidates = () => {
+    candidates = serverCandidates(info.server);
+    serverOptions.replaceChildren(...candidates.map((c) => Object.assign(document.createElement('option'), { value: c.url, label: c.label })));
+    if (!serverEdited) serverInput.value = candidates[0].url; // keep what the user typed
+  };
 
   // Code blocks with a copy button; the text is filled in by render().
   for (const block of $$('[data-code]', dialog)) {
@@ -646,14 +710,24 @@ function initSetupDialog() {
     note.classList.toggle('error', invalid);
     if (invalid) note.textContent = '사용자 ID에는 영문, 숫자와 . _ % + @ - 만 쓸 수 있습니다. 한글 이름은 이름 칸에 입력하세요.';
     else note.innerHTML = defaultNote;
-    const commands = setupCommands({ user: invalid ? '' : user, name, ...info });
+    const typedServer = serverInput.value.trim();
+    const serverHint = serverNote(typedServer, candidates);
+    serverNoteEl.textContent = serverHint.text;
+    serverNoteEl.classList.toggle('warning', Boolean(serverHint.warning));
+    serverInput.setAttribute('aria-invalid', String(!/^https?:\/\/[^/\s]+/.test(typedServer)));
+    // An unusable typed value falls back to the detected address so the commands stay valid.
+    const serverUrl = /^https?:\/\/[^/\s]+/.test(typedServer) ? typedServer : candidates[0].url;
+    const commands = setupCommands({ user: invalid ? '' : user, name, ...info, serverUrl });
     for (const block of $$('[data-code]', dialog)) setCode($('code', block), commands[block.dataset.code]);
     $('#setup-token-hint').hidden = !info.tokenRequired;
-    $('#setup-origin-hint').hidden = !['localhost', '127.0.0.1', '[::1]'].includes(location.hostname);
   };
 
   userInput.addEventListener('input', render);
   nameInput.addEventListener('input', render);
+  serverInput.addEventListener('input', () => {
+    serverEdited = true;
+    render();
+  });
   $$('[data-open-setup]').forEach((button) =>
     button.addEventListener('click', () => {
       render();
@@ -674,6 +748,8 @@ function initSetupDialog() {
     .then((result) => {
       info.tokenRequired = Boolean(result.tokenRequired);
       info.client = result.client;
+      info.server = result.server ?? null;
+      fillServerCandidates();
       render();
     })
     .catch(() => {

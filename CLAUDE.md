@@ -40,7 +40,7 @@ curl -s "localhost:3200/api/stats?since=2026-08-18&until=2026-09-16" | jq .trend
 
 The server does not auto-reload in `npm start`; restart after editing `server/src/*`. Files in `server/public/` are served statically (just reload the browser).
 
-Server env vars (all in `.env.example`, nothing else is read): `MONGODB_URI` (required, no localhost default), `MONGODB_DB` (else the URI's db name, else `cc_usage`), `PORT` (3000), `HOST` (0.0.0.0), `INGEST_TOKEN`, `REPORT_TIMEZONE`. Empty values count as unset.
+Server env vars (all in `.env.example`, nothing else is read): `MONGODB_URI` (required, no localhost default), `MONGODB_DB` (else the URI's db name, else `cc_usage`), `PORT` (3000), `HOST` (0.0.0.0), `INGEST_TOKEN`, `PUBLIC_URL` (address clients should use; validated as http(s)), `REPORT_TIMEZONE`. Empty values count as unset.
 
 ## Node client (`client/`)
 
@@ -69,7 +69,7 @@ Server env vars (all in `.env.example`, nothing else is read): `MONGODB_URI` (re
 
 ## Dashboard (`server/public`)
 
-- All resource and API paths are relative (the app runs under `/c/<project>/`). The setup dialog builds commands from `new URL('.', location.href)`, never `location.origin`.
+- All resource and API paths are relative (the app runs under `/c/<project>/`). The setup dialog's 서버 주소 field picks, in order: `PUBLIC_URL`, then — only when the page was opened as localhost — the server's LAN addresses/hostname (`/api/client-info` includes `server.addresses` only for loopback requests, see `server/src/network.js`), then the page's own base URL `new URL('.', location.href)` (never `location.origin`, which drops the sub-path). Users can pick another candidate or type one; loopback or non-http values show a warning.
 - Header button (and the empty state) opens the **클라이언트 설정 방법** `<dialog>`: email/name inputs fill the one-line `npx … setup` command (package path from `/api/client-info`) plus `cc-usage status|send|uninstall`. Commands stay single-line (PowerShell has no `\` continuation); `setCode` keeps words unbroken when wrapping. Keep its commands and privacy text in sync with the client's options and payload.
 - Single page; filters (7/30/90 days/custom, user) live in the URL query and re-fetch `/api/stats`; previous render is dimmed while loading. The 엑셀 다운로드 link follows the filters.
 - Charts: 일별 토큰 (stacked by user, area/bar toggle), 사용자별 토큰량 (horizontal bars), 사용량 추세 (group totals, as a 7-day moving average for ranges ≥14 days, plus each group's straight trend line; line/area toggle), plus trend-group tables and users/machines tables. Every chart has a table view (`renderChartTable`); helper datasets flagged `trendLine` are excluded from legend, tooltip and table.

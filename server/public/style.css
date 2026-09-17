@@ -267,6 +267,20 @@ body:has(dialog[open]) {
   gap: 12px;
 }
 
+.setup-fields .setup-server,
+.setup-fields .setup-server-note {
+  grid-column: 1 / -1;
+}
+
+.dialog-body .setup-server-note {
+  margin: -6px 0 2px;
+  font-size: 12px;
+}
+
+.dialog-body .setup-server-note.warning {
+  color: #b35c00;
+}
+
 .setup-fields label {
   display: flex;
   flex-direction: column;
