@@ -36,7 +36,7 @@ const dateTime = (v) =>
 // ------------------------------------------------------------------ state
 
 const form = $('#filters');
-const state = { users: [], stats: null };
+const state = { users: [], names: new Map(), stats: null };
 const charts = new Map();
 let requestSeq = 0;
 
@@ -71,6 +71,16 @@ function restoreFromUrl() {
   form.since.value = params.get('since') ?? isoDate(new Date(Date.now() - 29 * DAY_MS));
   form.until.value = params.get('until') ?? isoDate(new Date());
   return params.get('user') ?? '';
+}
+
+// ------------------------------------------------------------------ user names
+
+// The user id (email) identifies a person; the optional display name (e.g. 조휘열) is what people recognize.
+const displayName = (user) => state.names.get(user) || user;
+const fullLabel = (user) => (state.names.get(user) ? `${state.names.get(user)} (${user})` : user);
+
+function rememberNames(rows) {
+  for (const { user, name } of rows) if (name) state.names.set(user, name);
 }
 
 // ------------------------------------------------------------------ colors (follow the entity, never its rank)
@@ -290,19 +300,22 @@ function buildTable(header, rows, { numeric = () => false, swatches = [] } = {})
 
 // ------------------------------------------------------------------ renderers
 
-function stackedDaily(dates, rows, key, allNames, { value = 'totalTokens', kind = 'bar', fold = true } = {}) {
+const OTHER = Symbol('기타');
+
+function stackedDaily(dates, rows, key, allNames, { value = 'totalTokens', kind = 'bar', fold = true, labelOf = (k) => k } = {}) {
   const slots = slotMap(allNames);
-  const series = new Map(); // label -> { slot, values }
+  const series = new Map(); // entity id (or OTHER) -> { slot, values }
   const index = new Map(dates.map((d, i) => [d, i]));
   for (const row of rows) {
     // Unknown (new since page load) or folded entities go to "기타", unless one entity is shown on its own.
     const slot = slots.get(row[key]) ?? (fold ? null : 1);
-    const label = slot ? row[key] : '기타';
-    if (!series.has(label)) series.set(label, { slot, values: new Array(dates.length).fill(0) });
-    series.get(label).values[index.get(row.date)] += row[value];
+    const id = slot ? row[key] : OTHER;
+    if (!series.has(id)) series.set(id, { slot, values: new Array(dates.length).fill(0) });
+    series.get(id).values[index.get(row.date)] += row[value];
   }
   const ordered = [...series.entries()].sort(([, x], [, y]) => (x.slot ?? 99) - (y.slot ?? 99));
-  return ordered.map(([label, { slot, values }], i) => {
+  return ordered.map(([id, { slot, values }], i) => {
+    const label = id === OTHER ? '기타' : labelOf(id);
     return kind === 'area'
       ? areaDataset(label, values, colorOf(slot), i)
       : barDataset(label, values, colorOf(slot), { stacked: true });
@@ -340,10 +353,15 @@ function renderCharts(stats) {
     renderChart('users', {
       type: 'bar',
       data: {
-        labels: stats.users.map((u) => u.user),
+        labels: stats.users.map((u) => displayName(u.user)),
         datasets: [barDataset('토큰', stats.users.map((u) => u.totalTokens), css('--series-1'))],
       },
-      options: baseOptions({ horizontal: true }),
+      options: (() => {
+        const options = baseOptions({ horizontal: true });
+        // Bars are labelled by name; the tooltip adds the id so people with the same name stay distinguishable.
+        options.plugins.tooltip.callbacks.title = (items) => fullLabel(stats.users[items[0].dataIndex].user);
+        return options;
+      })(),
     });
   }
 }
@@ -351,11 +369,11 @@ function renderCharts(stats) {
 function renderTokenChart(stats, dates = dateRange(stats.range.since, stats.range.until), labels = dates.map(shortDate)) {
   const kind = $('input[name="tokenChartType"]:checked').value;
   const card = $('[data-chart="dailyTokens"]');
-  $('h2', card).textContent = stats.user ? `일별 토큰 · ${stats.user}` : '일별 토큰';
+  $('h2', card).textContent = stats.user ? `일별 토큰 · ${fullLabel(stats.user)}` : '일별 토큰';
   $('p', card).textContent = stats.user
     ? '하루 토큰 수 (입력·출력·캐시 생성·캐시 읽기), 모든 머신 합산'
     : '하루 토큰 수 (입력·출력·캐시 생성·캐시 읽기), 사용자별 누적';
-  const datasets = stackedDaily(dates, stats.byDateUser, 'user', state.users, { value: 'totalTokens', kind, fold: !stats.user });
+  const datasets = stackedDaily(dates, stats.byDateUser, 'user', state.users, { value: 'totalTokens', kind, fold: !stats.user, labelOf: displayName });
   renderChart('dailyTokens', {
     type: kind === 'area' ? 'line' : 'bar',
     data: { labels, datasets },
@@ -431,9 +449,9 @@ function renderTrend(stats) {
     } else {
       holder.append(
         buildTable(
-          ['사용자', '일평균', '추세 기울기', '추세 변화율'],
-          members.map((u) => [u.user, tokens(u.mean), perDay(u.slope), signedPct(u.changePct)]),
-          { numeric: (c) => c > 0 },
+          ['이름', '사용자', '일평균', '추세 기울기', '추세 변화율'],
+          members.map((u) => [u.name ?? '–', u.user, tokens(u.mean), perDay(u.slope), signedPct(u.changePct)]),
+          { numeric: (c) => c > 1 },
         ),
       );
     }
@@ -490,8 +508,9 @@ function renderTrend(stats) {
 function renderTables(stats) {
   const slots = slotMap(state.users);
   const usersTable = buildTable(
-    ['사용자', '전체 토큰', '출력 토큰', '캐시 읽기', '세션', '사용한 날', '머신', '마지막 사용일'],
+    ['이름', '사용자', '전체 토큰', '출력 토큰', '캐시 읽기', '세션', '사용한 날', '머신', '마지막 사용일'],
     stats.users.map((u) => [
+      u.name ?? '–',
       u.user,
       int(u.totalTokens),
       int(u.outputTokens),
@@ -501,13 +520,14 @@ function renderTables(stats) {
       `${u.machines} (${u.hostnames.filter(Boolean).join(', ') || '–'})`,
       u.lastDate,
     ]),
-    { numeric: (c) => c >= 1 && c <= 5, swatches: stats.users.map((u) => colorOf(slots.get(u.user))) },
+    { numeric: (c) => c >= 2 && c <= 6, swatches: stats.users.map((u) => colorOf(slots.get(u.user))) },
   );
   $('#users-table').replaceWith(Object.assign(usersTable, { id: 'users-table' }));
 
   const machinesTable = buildTable(
-    ['사용자', '호스트', '머신 ID', '마지막 보고', '보고 기간', '보고 횟수', 'ccusage'],
+    ['이름', '사용자', '호스트', '머신 ID', '마지막 보고', '보고 기간', '보고 횟수', 'ccusage'],
     stats.machines.map((m) => [
+      m.name ?? '–',
       m.user,
       m.hostname ?? '–',
       m.machineId.slice(0, 12),
@@ -516,7 +536,7 @@ function renderTables(stats) {
       int(m.reports),
       m.ccusageVersion ?? '–',
     ]),
-    { numeric: (c) => c === 5 },
+    { numeric: (c) => c === 6 },
   );
   $('#machines-table').replaceWith(Object.assign(machinesTable, { id: 'machines-table' }));
 }
@@ -527,12 +547,119 @@ function render(stats) {
   $('#kpis').hidden = empty;
   $('#charts').hidden = empty;
   $('#trend-groups').hidden = empty;
-  $('#empty-command').textContent =
-    `./ccusage_report.py --user you@example.com --server ${location.origin} --save-config\n./ccusage_report.py`;
   renderKpis(stats);
   if (!empty) renderCharts(stats);
   renderTables(stats);
   $('#meta').textContent = `${new Date().toLocaleTimeString('ko-KR')} 업데이트`;
+}
+
+// ------------------------------------------------------------------ client setup guide
+
+const USER_ID_RE = /^[\w.%+@-]{1,200}$/; // same rule as the client and the server
+
+/** Quotes a value for a POSIX shell only when needed (e.g. a Korean name with spaces). */
+const shellQuote = (value) => (/^[\w@.%+\-/:=]+$/.test(value) ? value : `'${value.replace(/'/g, `'\\''`)}'`);
+
+function setupCommands({ user, name, tokenRequired }) {
+  const origin = location.origin;
+  const setup = [
+    './ccusage_report.py',
+    `--user ${shellQuote(user || 'you@example.com')}`,
+    ...(name ? [`--name ${shellQuote(name)}`] : []),
+    `--server ${origin}`,
+    ...(tokenRequired ? ['--token YOUR_TOKEN'] : []),
+    '--save-config',
+  ];
+  return {
+    download: `mkdir -p ~/cc-usage && cd ~/cc-usage\ncurl -fsSLO ${origin}/client/ccusage_report.py\nchmod +x ccusage_report.py`,
+    setup: setup.join(' \\\n  '),
+    send: './ccusage_report.py            # 최근 7일\n./ccusage_report.py --days 30  # 최근 30일',
+    check: './ccusage_report.py --show-config',
+    cron: '0 19 * * * cd $HOME/cc-usage && PATH=<node 폴더>:/usr/bin:/bin ./ccusage_report.py >> $HOME/cc-usage/upload.log 2>&1',
+  };
+}
+
+async function copyText(text) {
+  try {
+    // writeText can stay pending when the page lacks focus or permission; don't leave the button hanging.
+    await Promise.race([
+      navigator.clipboard.writeText(text),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('clipboard timeout')), 1000)),
+    ]);
+    return true;
+  } catch {
+    // Clipboard API unavailable (e.g. plain http from another host): fall back to a hidden textarea.
+    const area = Object.assign(document.createElement('textarea'), { value: text });
+    area.style.position = 'fixed';
+    area.style.opacity = '0';
+    document.body.append(area);
+    area.select();
+    const ok = document.execCommand('copy');
+    area.remove();
+    return ok;
+  }
+}
+
+function initSetupDialog() {
+  const dialog = $('#setup-dialog');
+  const userInput = $('#setup-user');
+  const nameInput = $('#setup-name');
+  const note = $('#setup-user-note');
+  const defaultNote = note.innerHTML;
+  const info = { tokenRequired: false };
+
+  // Code blocks with a copy button; the text is filled in by render().
+  for (const block of $$('[data-code]', dialog)) {
+    const pre = document.createElement('pre');
+    const code = document.createElement('code');
+    pre.append(code);
+    const button = Object.assign(document.createElement('button'), { type: 'button', className: 'button copy', textContent: '복사' });
+    button.addEventListener('click', async () => {
+      button.textContent = (await copyText(code.textContent)) ? '복사됨' : '복사 실패';
+      setTimeout(() => (button.textContent = '복사'), 1500);
+    });
+    block.append(pre, button);
+  }
+
+  const render = () => {
+    const user = userInput.value.trim();
+    const name = nameInput.value.normalize('NFC').trim().replace(/\s+/gu, ' ');
+    const invalid = user !== '' && !USER_ID_RE.test(user);
+    userInput.setAttribute('aria-invalid', String(invalid));
+    note.classList.toggle('error', invalid);
+    if (invalid) note.textContent = '사용자 ID에는 영문, 숫자와 . _ % + @ - 만 쓸 수 있습니다. 한글 이름은 이름 칸에 입력하세요.';
+    else note.innerHTML = defaultNote;
+    const commands = setupCommands({ user: invalid ? '' : user, name, tokenRequired: info.tokenRequired });
+    for (const block of $$('[data-code]', dialog)) $('code', block).textContent = commands[block.dataset.code];
+    $('#setup-token-hint').hidden = !info.tokenRequired;
+    $('#setup-origin-hint').hidden = !['localhost', '127.0.0.1', '[::1]'].includes(location.hostname);
+  };
+
+  userInput.addEventListener('input', render);
+  nameInput.addEventListener('input', render);
+  $$('[data-open-setup]').forEach((button) =>
+    button.addEventListener('click', () => {
+      render();
+      dialog.showModal();
+      userInput.focus();
+    }),
+  );
+  $('[data-close-setup]', dialog).addEventListener('click', () => dialog.close());
+  // Clicking the dimmed backdrop (outside the panel) closes the dialog; Esc is handled by <dialog> itself.
+  dialog.addEventListener('click', (event) => {
+    if (event.target !== dialog) return;
+    const r = dialog.getBoundingClientRect();
+    const inside = event.clientX >= r.left && event.clientX <= r.right && event.clientY >= r.top && event.clientY <= r.bottom;
+    if (!inside) dialog.close();
+  });
+
+  getJson('api/client-info')
+    .then((result) => {
+      info.tokenRequired = Boolean(result.tokenRequired);
+      render();
+    })
+    .catch(() => {});
+  render();
 }
 
 // ------------------------------------------------------------------ data
@@ -555,6 +682,7 @@ async function load() {
     const stats = await getJson(`api/stats?${params}`);
     if (seq !== requestSeq) return;
     state.stats = stats;
+    rememberNames(stats.users);
     render(stats);
   } catch (err) {
     $('#meta').textContent = `불러오기 실패: ${err.message}`;
@@ -564,9 +692,14 @@ async function load() {
 }
 
 async function init() {
+  initSetupDialog();
   const wantedUser = restoreFromUrl();
-  state.users = await getJson('api/users');
-  for (const user of [...state.users].sort((a, b) => a.localeCompare(b))) form.user.add(new Option(user, user));
+  const users = await getJson('api/users');
+  state.users = users.map((u) => u.user);
+  rememberNames(users);
+  // Named people first, sorted the Korean way; then ids without a name.
+  const byLabel = [...users].sort((a, b) => (!a.name - !b.name) || (a.name ?? a.user).localeCompare(b.name ?? b.user, 'ko'));
+  for (const { user } of byLabel) form.user.add(new Option(fullLabel(user), user));
   if (state.users.includes(wantedUser)) form.user.value = wantedUser;
 
   Chart.defaults.font.family = css('--font') || 'system-ui, sans-serif';

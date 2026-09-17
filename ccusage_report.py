@@ -9,7 +9,7 @@ Usage:
     ./ccusage_report.py --days 14
     ./ccusage_report.py --bin ccusage      # use the locally installed binary
     ./ccusage_report.py --stdout           # also print the markdown report
-    ./ccusage_report.py --user felix.cho.kr@gmail.com --server http://localhost:3200 --save-config
+    ./ccusage_report.py --user felix.cho.kr@gmail.com --name 조휘열 --server http://localhost:3200 --save-config
                                            # one-time: remember sender id and server
     ./ccusage_report.py                    # then every run also uploads (--no-send to skip)
     ./ccusage_report.py --send-only reports/2026-09-10_2026-09-16/summary.json
@@ -29,6 +29,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import unicodedata
 import urllib.error
 import urllib.request
 import uuid
@@ -311,12 +312,25 @@ def render_markdown(s: dict, meta: dict, top: int) -> str:
 
 
 CONFIG_PATH = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "cc-usage" / "config.json"
-USER_RE = re.compile(r"^[\w.%+@-]{1,200}$")  # same rule the server enforces
+USER_RE = re.compile(r"^[\w.%+@-]{1,200}$", re.ASCII)  # same rule the server enforces
+NAME_MAX = 50  # display name length (characters), same limit as the server
+
+
+def normalize_name(name: str | None) -> str | None:
+    """Display name such as a Korean name ("조휘열"): NFC-normalized, whitespace collapsed, no control characters."""
+    if name is None:
+        return None
+    name = " ".join(unicodedata.normalize("NFC", name).split())
+    if not name:
+        return None
+    if len(name) > NAME_MAX or any(unicodedata.category(ch) in ("Cc", "Cf") for ch in name):
+        raise ValueError(f"name must be at most {NAME_MAX} characters without control characters")
+    return name
 
 
 def load_config() -> dict:
     try:
-        return json.loads(CONFIG_PATH.read_text())
+        return json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
     except FileNotFoundError:
         return {}
     except (OSError, ValueError) as e:
@@ -326,7 +340,7 @@ def load_config() -> dict:
 
 def save_config(values: dict) -> None:
     CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    CONFIG_PATH.write_text(json.dumps(values, indent=2) + "\n")
+    CONFIG_PATH.write_text(json.dumps(values, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     CONFIG_PATH.chmod(0o600)  # may hold the upload token
 
 
@@ -408,6 +422,7 @@ def build_payload(summary: dict, meta: dict, identity: dict) -> dict:
     return {
         "schemaVersion": SCHEMA_VERSION,
         "user": identity["user"],
+        **({"name": identity["name"]} if identity.get("name") else {}),
         "machineId": identity["machineId"],
         "hostname": identity["hostname"],
         "timezone": meta.get("timezone") or local_timezone(),
@@ -425,10 +440,11 @@ def build_payload(summary: dict, meta: dict, identity: dict) -> dict:
 
 def upload(server: str, token: str | None, payload: dict, timeout: int) -> dict:
     url = server.rstrip("/") + "/api/reports"
-    headers = {"Content-Type": "application/json"}
+    headers = {"Content-Type": "application/json; charset=utf-8"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
-    request = urllib.request.Request(url, data=json.dumps(payload).encode(), headers=headers, method="POST")
+    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    request = urllib.request.Request(url, data=body, headers=headers, method="POST")
     try:
         with urllib.request.urlopen(request, timeout=timeout) as resp:
             return json.loads(resp.read() or b"{}")
@@ -444,7 +460,8 @@ def send(args: argparse.Namespace, identity: dict, summary: dict, meta: dict) ->
     except CcusageError as e:
         print(f"error: {e}", file=sys.stderr)
         return False
-    print(f"[upload] {identity['user']} machine {identity['machineId'][:8]} ({identity['hostname']}) -> "
+    who = f"{identity['name']} <{identity['user']}>" if identity.get("name") else identity["user"]
+    print(f"[upload] {who} machine {identity['machineId'][:8]} ({identity['hostname']}) -> "
           f"{args.server}: {result.get('totalTokens', 0):,} tokens, {result.get('activeDays', 0)} active days, "
           f"{result.get('sessions', 0)} sessions", file=sys.stderr)
     return True
@@ -472,6 +489,8 @@ def main() -> int:
         "upload", f"Values resolve as: option > environment variable > {CONFIG_PATH} > default.")
     upload_opts.add_argument("--user", help="sender id, e.g. felix.cho.kr@gmail.com "
                                             "(env CCUSAGE_USER, default: git user.email or login name)")
+    upload_opts.add_argument("--name", help="display name shown on the dashboard, e.g. 조휘열 "
+                                            "(env CCUSAGE_NAME, optional)")
     upload_opts.add_argument("--server", help="usage server base URL, e.g. http://localhost:3200 (env CCUSAGE_SERVER)")
     upload_opts.add_argument("--token", help="bearer token if the server requires one (env CCUSAGE_TOKEN)")
     upload_opts.add_argument("--machine-id", help="override the computer id derived from the OS machine UUID "
@@ -485,7 +504,8 @@ def main() -> int:
     args = parser.parse_args()
 
     config = load_config()
-    for opt, env, key in [("user", "CCUSAGE_USER", "user"), ("server", "CCUSAGE_SERVER", "server"),
+    for opt, env, key in [("user", "CCUSAGE_USER", "user"), ("name", "CCUSAGE_NAME", "name"),
+                          ("server", "CCUSAGE_SERVER", "server"),
                           ("token", "CCUSAGE_TOKEN", "token"), ("machine_id", "CCUSAGE_MACHINE_ID", "machineId")]:
         if args.save_config:
             continue  # only persist what was passed explicitly
@@ -493,29 +513,47 @@ def main() -> int:
             setattr(args, opt, os.environ.get(env) or config.get(key))
 
     if args.save_config:
-        updates = {"user": args.user, "server": args.server, "token": args.token, "machineId": args.machine_id}
+        updates = {"user": args.user, "name": args.name, "server": args.server, "token": args.token,
+                   "machineId": args.machine_id}
         updates = {k: v for k, v in updates.items() if v is not None}
         if not updates:
-            parser.error("--save-config needs at least one of --user, --server, --token, --machine-id")
+            parser.error("--save-config needs at least one of --user, --name, --server, --token, --machine-id")
         if "user" in updates and not USER_RE.match(updates["user"]):
-            parser.error("--user may only contain letters, digits and . _ % + @ -")
+            parser.error("--user may only contain letters, digits and . _ % + @ - (put a Korean name in --name)")
+        if "name" in updates:
+            try:
+                updates["name"] = normalize_name(updates["name"])
+            except ValueError as e:
+                parser.error(f"--name: {e}")
+            if updates["name"] is None:
+                updates.pop("name")
+                if not updates and config.pop("name", None) is not None:  # --name "" clears a saved name
+                    save_config(config)
+                    print(f"cleared saved name in {CONFIG_PATH}", file=sys.stderr)
+                    return 0
+                config.pop("name", None)
         save_config({**config, **updates})
         shown = {k: ("***" if k == "token" else v) for k, v in updates.items()}
-        print(f"saved {shown} to {CONFIG_PATH}", file=sys.stderr)
+        print(f"saved {json.dumps(shown, ensure_ascii=False)} to {CONFIG_PATH}", file=sys.stderr)
         return 0
 
+    try:
+        name = normalize_name(args.name)
+    except ValueError as e:
+        parser.error(f"--name: {e}")
     identity = {
         "user": args.user or default_user(),
+        "name": name,
         "machineId": args.machine_id or machine_id(config),
         "hostname": socket.gethostname(),
     }
     if not USER_RE.match(identity["user"]):
         parser.error(f"invalid user id {identity['user']!r}: use letters, digits and . _ % + @ - "
-                     "(set one with --user you@example.com --save-config)")
+                     "(set one with --user you@example.com --save-config; a Korean name goes in --name)")
 
     if args.show_config:
         print(json.dumps({**identity, "server": args.server, "token": "***" if args.token else None,
-                          "configFile": str(CONFIG_PATH)}, indent=2))
+                          "configFile": str(CONFIG_PATH)}, indent=2, ensure_ascii=False))
         return 0
 
     if args.send_only:

@@ -14,6 +14,7 @@ export async function connect() {
     // while reports from a user's other machines are kept and summed.
     db.collection('daily').createIndex({ user: 1, machineId: 1, date: 1 }, { unique: true }),
     db.collection('daily').createIndex({ date: 1 }),
+    db.collection('users').createIndex({ user: 1 }, { unique: true }),
     // Full history: every submitted report is kept as received.
     db.collection('reports').createIndex({ receivedAt: -1 }),
     db.collection('reports').createIndex({ user: 1, machineId: 1, receivedAt: -1 }),

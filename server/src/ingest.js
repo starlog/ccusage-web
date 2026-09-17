@@ -4,6 +4,8 @@ export const TOKEN_FIELDS = ['inputTokens', 'outputTokens', 'cacheCreationTokens
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const USER_RE = /^[\w.%+@-]{1,200}$/;
 const MACHINE_ID_RE = /^[A-Za-z0-9_-]{8,128}$/;
+const NAME_MAX = 50;
+const CONTROL_RE = /[\p{Cc}\p{Cf}]/u;
 const MAX_ROWS = 5000;
 
 export class ValidationError extends Error {}
@@ -22,6 +24,16 @@ function num(value, name) {
   const n = value ?? 0;
   if (typeof n !== 'number' || !Number.isFinite(n) || n < 0) fail(`${name} must be a non-negative number`);
   return n;
+}
+
+/** Optional display name such as a Korean name ("조휘열"): NFC-normalized, whitespace collapsed. */
+function displayName(value) {
+  if (value == null) return null;
+  if (typeof value !== 'string') fail('name must be a string');
+  const name = value.normalize('NFC').trim().replace(/\s+/gu, ' ');
+  if (!name) return null;
+  if ([...name].length > NAME_MAX || CONTROL_RE.test(name)) fail(`name must be at most ${NAME_MAX} characters without control characters`);
+  return name;
 }
 
 function day(value, name) {
@@ -63,6 +75,7 @@ export function parseReport(body) {
   if (!USER_RE.test(user)) fail('user may only contain letters, digits and . _ % + @ - (e.g. name@example.com)');
   const machineId = str(body.machineId, 'machineId', { max: 128 });
   if (!MACHINE_ID_RE.test(machineId)) fail('machineId must be 8-128 chars of [A-Za-z0-9_-]');
+  const name = displayName(body.name);
 
   const since = day(body.range?.since, 'range.since');
   const until = day(body.range?.until, 'range.until');
@@ -85,6 +98,7 @@ export function parseReport(body) {
 
   return {
     user,
+    name,
     machineId,
     hostname: str(body.hostname, 'hostname', { max: 200, optional: true }),
     timezone: str(body.timezone, 'timezone', { max: 100, optional: true }),
@@ -100,17 +114,19 @@ export function parseReport(body) {
 /**
  * Stores a parsed report in two ways:
  * - `reports`: every submission is kept as received (period total and per-day totals) as history.
+ * - `users`: each user's latest reported display name.
  * - `daily`: the current view used for statistics, keyed by user + machine, so each computer a user reports
  *   from is kept separately and statistics sum them. For a given machine the most recently submitted window
  *   is authoritative for its days.
  */
 export async function storeReport(report) {
-  const { user, machineId, hostname, since, until } = report;
+  const { user, name, machineId, hostname, since, until } = report;
   const now = new Date();
   const key = { user, machineId };
 
   const { insertedId } = await db.collection('reports').insertOne({
     ...key,
+    name,
     hostname,
     receivedAt: now,
     generatedAt: report.generatedAt,
@@ -121,6 +137,12 @@ export async function storeReport(report) {
     periodTotal: report.periodTotal,
     dailyTotals: report.dailyTotals,
   });
+
+  // The latest name a user reported is the one shown. Reports without a name keep the existing one, so a
+  // machine that has no name configured does not erase it.
+  if (name) {
+    await db.collection('users').updateOne({ user }, { $set: { name, updatedAt: now } }, { upsert: true });
+  }
 
   const activeDays = report.dailyTotals.filter((d) => d.totalTokens > 0);
   await db.collection('daily').deleteMany({
@@ -142,6 +164,7 @@ export async function storeReport(report) {
   return {
     reportId: insertedId,
     user,
+    name,
     machineId,
     hostname,
     since,

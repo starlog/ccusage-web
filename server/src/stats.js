@@ -28,7 +28,7 @@ export async function getStats({ since, until, user }) {
   const dailyMatch = { $match: { ...userMatch, date: { $gte: since, $lte: until } } };
   const daily = db.collection('daily');
 
-  const [totals, byDateUser, users, machines] = await Promise.all([
+  const [totals, byDateUser, users, machines, names] = await Promise.all([
     daily
       .aggregate([
         dailyMatch,
@@ -70,7 +70,10 @@ export async function getStats({ since, until, user }) {
         { $sort: { user: 1, receivedAt: -1 } },
       ])
       .toArray(),
+    nameMap(userMatch),
   ]);
+  const withName = (row) => ({ ...row, name: names.get(row.user) ?? null });
+  const trend = userTrends(byDateUser, since, until);
 
   const t = totals[0] ?? { ...Object.fromEntries(USAGE_FIELDS.map((f) => [f, 0])), activeUsers: 0, activeDays: 0 };
   const cacheBase = t.cacheReadTokens + t.cacheCreationTokens + t.inputTokens;
@@ -83,9 +86,9 @@ export async function getStats({ since, until, user }) {
       cacheHitRate: cacheBase ? t.cacheReadTokens / cacheBase : 0,
     },
     byDateUser,
-    users,
-    machines,
-    trend: userTrends(byDateUser, since, until),
+    users: users.map(withName),
+    machines: machines.map(withName),
+    trend: trend && { ...trend, users: trend.users.map(withName) },
   };
 }
 
@@ -147,12 +150,25 @@ export async function getReport(id) {
   return db.collection('reports').findOne({ _id: new ObjectId(id) });
 }
 
-/** Every user that ever reported, by all-time tokens - the stable order the dashboard assigns colors from. */
+/** user id -> latest display name. */
+async function nameMap(match = {}) {
+  const rows = await db.collection('users').find(match, { projection: { _id: 0, user: 1, name: 1 } }).toArray();
+  return new Map(rows.map((r) => [r.user, r.name]));
+}
+
+/**
+ * Every user that ever reported with their display name, by all-time tokens - the stable order the dashboard
+ * assigns colors from.
+ */
 export async function listUsers() {
-  const [ranked, all] = await Promise.all([
+  const [ranked, all, names] = await Promise.all([
     db.collection('daily').aggregate([{ $group: { _id: '$user', totalTokens: { $sum: '$totalTokens' } } }, { $sort: { totalTokens: -1, _id: 1 } }]).toArray(),
     db.collection('reports').distinct('user'),
+    nameMap(),
   ]);
-  const names = ranked.map((r) => r._id);
-  return [...names, ...all.filter((u) => !names.includes(u)).sort((a, b) => a.localeCompare(b))];
+  const ids = ranked.map((r) => r._id);
+  return [...ids, ...all.filter((u) => !ids.includes(u)).sort((a, b) => a.localeCompare(b))].map((user) => ({
+    user,
+    name: names.get(user) ?? null,
+  }));
 }

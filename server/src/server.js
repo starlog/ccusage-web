@@ -30,7 +30,7 @@ app.post(
   express.json({ limit: '10mb' }),
   asyncRoute(async (req, res) => {
     const stored = await storeReport(parseReport(req.body));
-    console.log(`[ingest] ${stored.user} machine=${stored.machineId.slice(0, 8)} (${stored.hostname ?? '?'}) ${stored.since}~${stored.until} ${stored.totalTokens} tokens`);
+    console.log(`[ingest] ${stored.name ? `${stored.name} <${stored.user}>` : stored.user} machine=${stored.machineId.slice(0, 8)} (${stored.hostname ?? '?'}) ${stored.since}~${stored.until} ${stored.totalTokens} tokens`);
     res.status(201).json({ ok: true, ...stored });
   }),
 );
@@ -72,6 +72,14 @@ app.get(
     await ping();
     res.json({ ok: true });
   }),
+);
+
+// Setup guide on the dashboard: whether uploads need a token (never the token itself).
+app.get('/api/client-info', (_req, res) => res.json({ tokenRequired: Boolean(config.ingestToken) }));
+
+// The client script, so new users can download it straight from this server.
+app.get('/client/ccusage_report.py', (_req, res) =>
+  res.type('text/x-python').download(path.join(root, '..', 'ccusage_report.py'), 'ccusage_report.py'),
 );
 
 app.get('/vendor/chart.umd.js', (_req, res) => res.sendFile(path.join(root, 'node_modules/chart.js/dist/chart.umd.js')));

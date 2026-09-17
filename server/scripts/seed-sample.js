@@ -31,7 +31,7 @@ if (args.clean) {
   const client = await new MongoClient(config.mongoUri).connect();
   const db = client.db(config.mongoDb);
   const filter = { user: { $regex: `@${SAMPLE_DOMAIN.replace('.', '\\.')}$` } };
-  for (const name of ['reports', 'daily']) {
+  for (const name of ['reports', 'daily', 'users']) {
     const { deletedCount } = await db.collection(name).deleteMany(filter);
     console.log(`${name}: deleted ${deletedCount}`);
   }
@@ -75,6 +75,18 @@ const NAMES = [
   'eunseo.jin', 'kihyun.ji', 'mirae.cho', 'jaehyuk.byun', 'dasom.eom', 'wonjae.chae', 'haeun.won',
 ];
 
+const KOREAN_NAMES = {
+  'minji.kim': '김민지', 'jiho.lee': '이지호', 'seoyeon.park': '박서연', 'hyunwoo.choi': '최현우', 'jiwon.jung': '정지원',
+  'dohyun.kang': '강도현', 'sujin.yoon': '윤수진', 'taeyang.jang': '장태양', 'yuna.lim': '임유나', 'junseo.han': '한준서',
+  'eunji.oh': '오은지', 'sungmin.seo': '서성민', 'hayoung.shin': '신하영', 'jaewon.kwon': '권재원', 'dahye.hwang': '황다혜',
+  'minho.ahn': '안민호', 'soyeon.song': '송소연', 'kyungmin.jeon': '전경민', 'nari.hong': '홍나리', 'woojin.go': '고우진',
+  'chaewon.moon': '문채원', 'seungho.yang': '양승호', 'bora.son': '손보라', 'jinwoo.bae': '배진우', 'yerin.baek': '백예린',
+  'donghyun.heo': '허동현', 'gaeun.yoo': '유가은', 'hyejin.nam': '남혜진', 'siwoo.noh': '노시우', 'arin.ha': '하아린',
+  'jihoon.kwak': '곽지훈', 'subin.seong': '성수빈', 'yejin.cha': '차예진', 'hyunjun.joo': '주현준', 'somin.woo': '우소민',
+  'taemin.min': '민태민', 'jiyoung.ryu': '류지영', 'sanghoon.na': '나상훈', 'eunseo.jin': '진은서', 'kihyun.ji': '지기현',
+  'mirae.cho': '조미래', 'jaehyuk.byun': '변재혁', 'dasom.eom': '엄다솜', 'wonjae.chae': '채원재', 'haeun.won': '원하은',
+};
+
 // Daily token volume on a working day (median, log-normal spread) and how often they work.
 // Based on real Claude Code usage: tens to hundreds of millions of tokens a day, ~97% cache reads.
 const PERSONAS = {
@@ -110,6 +122,8 @@ function buildPerson(name, index, days) {
   const machineCount = pick([[1, 0.62], [2, 0.3], [3, 0.08]]);
   return {
     user: `${name}@${SAMPLE_DOMAIN}`,
+    // Most people set a Korean display name; a few never configure one.
+    name: index % 9 === 4 ? null : KOREAN_NAMES[name],
     persona: PERSONAS[personaName],
     personaName,
     trendName,
@@ -163,6 +177,7 @@ function report(person, machine, daily) {
   return {
     schemaVersion: 3,
     user: person.user,
+    ...(person.name ? { name: person.name } : {}),
     machineId: machine.machineId,
     hostname: machine.hostname,
     timezone: 'Asia/Seoul',
@@ -217,7 +232,7 @@ for (let i = 0; i < userCount; i += 1) {
     .filter(Boolean)
     .join(', ');
   console.log(
-    `${person.user.padEnd(28)} ${person.personaName.padEnd(8)} ${person.trendName.padEnd(8)} ` +
+    `${person.user.padEnd(28)} ${(person.name ?? '-').padEnd(4)} ${person.personaName.padEnd(8)} ${person.trendName.padEnd(8)} ` +
       `${person.machines.length} machine(s) ${eok(personTotal).padStart(8)} ${notes}`,
   );
 }
