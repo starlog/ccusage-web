@@ -3,3 +3,9 @@ server/.env
 reports/
 __pycache__/
 server/.client-dist/
+.env
+.env.local
+.env.production
+venv/
+.DS_Store
+*.pyc
