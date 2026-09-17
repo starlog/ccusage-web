@@ -103,7 +103,9 @@ const withoutOurLines = (text) =>
     .filter((line) => line && !line.endsWith(CRON_TAG))
     .join('\n');
 
-const cronLine = (entry, time) => `${time.minute} ${time.hour} * * * ${jobArgs(entry).map(shellQuote).join(' ')} ${CRON_TAG}`;
+// cron turns an unescaped % into a newline even inside quotes.
+const cronLine = (entry, time) =>
+  `${time.minute} ${time.hour} * * * ${jobArgs(entry).map((a) => shellQuote(a).replace(/%/g, '\\%')).join(' ')} ${CRON_TAG}`;
 
 const linux = {
   kind: 'cron',

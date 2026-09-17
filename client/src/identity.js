@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import { saveConfig } from './config.js';
 
-// Same rules as the server (and the Python client).
+// Same rules as the server (server/src/ingest.js).
 export const USER_RE = /^[\w.%+@-]{1,200}$/;
 const NAME_MAX = 50;
 const CONTROL_RE = /[\p{Cc}\p{Cf}]/u;
@@ -59,7 +59,7 @@ function osMachineUuid() {
   return null;
 }
 
-/** Stable, anonymized id of this computer. Identical to the Python client's value for the same machine. */
+/** Stable, anonymized id of this computer. Changing the formula would split a person's existing records. */
 export function machineId(config) {
   let raw = osMachineUuid();
   if (!raw) {

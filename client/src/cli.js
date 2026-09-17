@@ -149,6 +149,7 @@ async function setup(cliOptions) {
   const user = validateUser(options.user ?? env('CCUSAGE_USER') ?? config.user ?? defaultUser());
   const name = options.name !== undefined ? normalizeName(options.name) : normalizeName(env('CCUSAGE_NAME') ?? config.name);
   const token = options.token ?? env('CCUSAGE_TOKEN') ?? config.token;
+  const machineIdOverride = options['machine-id'] ?? env('CCUSAGE_MACHINE_ID');
   const schedule = !options['no-schedule'];
   const time = parseTime(options.time ?? loadState().schedule?.time ?? DEFAULT_TIME);
   const days = parseDays(options.days);
@@ -158,10 +159,16 @@ async function setup(cliOptions) {
   const info = await clientInfo(server);
   if (info.tokenRequired && !token) throw new Error('이 서버는 업로드 토큰이 필요합니다. 관리자에게 받은 토큰을 --token으로 넣어 주세요.');
 
-  const nextConfig = { ...config, server, user, ...(token ? { token } : {}) };
+  const nextConfig = { ...config, server, user, ...(token ? { token } : {}), ...(machineIdOverride ? { machineId: machineIdOverride } : {}) };
   if (name) nextConfig.name = name;
   else delete nextConfig.name;
-  const tarball = packageUrl(server, info.client?.package);
+  // The install URL ends up on a command line (and in a Windows shell), so accept only the expected shape.
+  const packagePathFromServer = info.client?.package;
+  if (packagePathFromServer !== undefined && !/^\/client\/cc-usage-client(-[\w.-]+)?\.tgz$/.test(packagePathFromServer)) {
+    throw new Error(`서버가 올바르지 않은 패키지 경로를 보냈습니다: ${packagePathFromServer}`);
+  }
+  const tarball = packageUrl(server, packagePathFromServer);
+  if (!/^https?:\/\/[\w.:[\]@/%~-]+\.tgz$/.test(tarball)) throw new Error(`설치 주소에 허용되지 않는 문자가 있습니다: ${tarball}`);
 
   if (options['dry-run']) {
     const { token: savedToken, ...shown } = nextConfig;

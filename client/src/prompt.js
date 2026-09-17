@@ -12,9 +12,10 @@ export class SetupCancelled extends Error {}
 function createAsker() {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout, terminal: true });
   let muted = false;
+  // _writeToOutput is internal to readline; if a Node version drops it, secrets are simply not hidden.
   const write = rl._writeToOutput?.bind(rl);
   // Hide typed characters for secrets, like sudo (readline has no built-in password mode).
-  rl._writeToOutput = (text) => {
+  if (write) rl._writeToOutput = (text) => {
     if (!muted) write(text);
   };
 
@@ -33,7 +34,7 @@ function createAsker() {
         rl.off('close', onClose);
         if (secret) {
           muted = false;
-          write('\n');
+          write?.('\n');
         }
         resolve(answer.trim());
       });

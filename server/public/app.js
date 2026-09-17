@@ -401,7 +401,7 @@ function movingAverage(values, window) {
 const signedPct = (v) => `${v >= 0.5 ? '+' : v <= -0.5 ? '−' : ''}${Math.abs(Math.round(v))}%`;
 const mmdd = (iso) => iso.slice(5).replace('-', '/');
 
-/** Least-squares line through daily values (same method the server uses to group users). */
+/** Least-squares line through daily values: the same method as linearTrend() in server/src/stats.js; change both together. */
 function linearFit(values) {
   const n = values.length;
   const mean = values.reduce((a, b) => a + b, 0) / n;
@@ -457,7 +457,6 @@ function renderTrend(stats) {
     }
   }
 
-  if (card.hidden) return;
   // Each group's tokens per day (a 7-day average from 14 days on, since weekends swing daily totals) plus the
   // group's straight trend line in line mode.
   const kind = $('input[name="trendChartType"]:checked').value;
@@ -561,7 +560,8 @@ const USER_ID_RE = /^[\w.%+@-]{1,200}$/; // same rule as the client and the serv
 const shellQuote = (value) => (/^[\w@.%+\-/:=]+$/.test(value) ? value : `'${value.replace(/'/g, `'\\''`)}'`);
 
 function setupCommands({ user, name, tokenRequired, client }) {
-  const origin = location.origin;
+  // Base URL of this dashboard, including a reverse-proxy sub-path such as /c/cc-usage (no trailing slash).
+  const origin = new URL('.', location.href).href.replace(/\/+$/, '');
   const setup = client === undefined
     ? '설치 명령을 불러오는 중입니다…'
     : client
@@ -713,6 +713,27 @@ async function load() {
   }
 }
 
+/** Remembers a radio choice (chart type) per browser and re-renders its chart when it changes. */
+function persistChoice(name, allowed, render) {
+  const key = `cc-usage.${name}`;
+  try {
+    const saved = localStorage.getItem(key);
+    if (allowed.includes(saved)) $(`input[name="${name}"][value="${saved}"]`).checked = true;
+  } catch {
+    // storage unavailable: keep the default choice
+  }
+  $$(`input[name="${name}"]`).forEach((input) => {
+    input.addEventListener('change', () => {
+      try {
+        localStorage.setItem(key, input.value);
+      } catch {
+        // not persisted; the choice still applies to this page
+      }
+      if (state.stats && state.stats.totals.totalTokens > 0) render(state.stats);
+    });
+  });
+}
+
 async function init() {
   initSetupDialog();
   const wantedUser = restoreFromUrl();
@@ -730,41 +751,8 @@ async function init() {
   form.addEventListener('change', load);
   form.addEventListener('submit', (e) => e.preventDefault());
 
-  const TOKEN_CHART_KEY = 'cc-usage.tokenChartType';
-  try {
-    const saved = localStorage.getItem(TOKEN_CHART_KEY);
-    if (saved === 'area' || saved === 'bar') $(`input[name="tokenChartType"][value="${saved}"]`).checked = true;
-  } catch {
-    // storage unavailable: keep the area default
-  }
-  $$('input[name="tokenChartType"]').forEach((input) => {
-    input.addEventListener('change', () => {
-      try {
-        localStorage.setItem(TOKEN_CHART_KEY, input.value);
-      } catch {
-        // not persisted; the choice still applies to this page
-      }
-      if (state.stats && state.stats.totals.totalTokens > 0) renderTokenChart(state.stats);
-    });
-  });
-
-  const TREND_CHART_KEY = 'cc-usage.trendChartType';
-  try {
-    const saved = localStorage.getItem(TREND_CHART_KEY);
-    if (saved === 'line' || saved === 'area') $(`input[name="trendChartType"][value="${saved}"]`).checked = true;
-  } catch {
-    // storage unavailable: keep the line default
-  }
-  $$('input[name="trendChartType"]').forEach((input) => {
-    input.addEventListener('change', () => {
-      try {
-        localStorage.setItem(TREND_CHART_KEY, input.value);
-      } catch {
-        // not persisted; the choice still applies to this page
-      }
-      if (state.stats && state.stats.totals.totalTokens > 0) renderTrend(state.stats);
-    });
-  });
+  persistChoice('tokenChartType', ['area', 'bar'], renderTokenChart);
+  persistChoice('trendChartType', ['line', 'area'], renderTrend);
 
   $$('.view-toggle').forEach((button) => {
     button.addEventListener('click', () => {

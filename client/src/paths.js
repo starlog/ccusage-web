@@ -4,7 +4,6 @@ import path from 'node:path';
 const home = os.homedir();
 const isWindows = process.platform === 'win32';
 
-// Same location the Python client (ccusage_report.py) uses, so existing settings carry over.
 export const CONFIG_DIR = path.join(process.env.XDG_CONFIG_HOME || path.join(home, '.config'), 'cc-usage');
 export const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
 export const STATE_FILE = path.join(CONFIG_DIR, 'state.json');

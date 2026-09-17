@@ -1,19 +1,39 @@
 import { timingSafeEqual } from 'node:crypto';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
 import { clientPackage, packagePath } from './client-package.js';
 import { config } from './config.js';
+import { dayCount, isCalendarDate } from './dates.js';
 import { close, connect, ping } from './db.js';
 import { buildWorkbook } from './export.js';
 import { parseReport, storeReport, ValidationError } from './ingest.js';
 import { getReport, getStats, listReports, listUsers } from './stats.js';
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
-const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const MAX_RANGE_DAYS = 3 * 366;
+// chart.js does not export dist/chart.umd.js, so locate it next to the package entry (works wherever npm installs it).
+const chartUmd = path.join(path.dirname(createRequire(import.meta.url).resolve('chart.js')), 'chart.umd.js');
 
 const app = express();
 app.disable('x-powered-by');
+// Behind the Nginx reverse proxy: take the client address from X-Forwarded-For when it comes from a private hop.
+app.set('trust proxy', 'loopback, uniquelocal');
+
+// Liveness check for the deployment platform: no auth, no database.
+app.get('/health', (_req, res) => res.json({ status: 'ok' }));
+
+app.use((_req, res, next) => {
+  res.set({
+    'X-Content-Type-Options': 'nosniff',
+    'Referrer-Policy': 'same-origin',
+    'Content-Security-Policy':
+      "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; " +
+      "frame-ancestors 'self'; base-uri 'self'; form-action 'self'",
+  });
+  next();
+});
 
 function requireIngestToken(req, res, next) {
   if (!config.ingestToken) return next();
@@ -40,11 +60,11 @@ app.post(
 /** since/until (YYYY-MM-DD) and optional user from the query string, or null after sending a 400. */
 function rangeQuery(req, res) {
   const { since, until, user } = req.query;
-  if (typeof since !== 'string' || typeof until !== 'string' || !DATE_RE.test(since) || !DATE_RE.test(until) || since > until) {
+  if (!isCalendarDate(since) || !isCalendarDate(until) || since > until) {
     res.status(400).json({ error: 'since and until (YYYY-MM-DD, since <= until) are required' });
     return null;
   }
-  if (Date.parse(`${until}T00:00:00Z`) - Date.parse(`${since}T00:00:00Z`) > 3 * 366 * 86_400_000) {
+  if (dayCount(since, until) > MAX_RANGE_DAYS) {
     res.status(400).json({ error: 'range must be at most 3 years' });
     return null;
   }
@@ -117,44 +137,55 @@ app.get(
   }),
 );
 
+// Unknown API paths answer in JSON like every other API response.
+app.use('/api', (_req, res) => res.status(404).json({ error: 'not found' }));
+
 // Node.js client package for `npx <url> setup`. Any version/hash in the name serves the current package; the
 // hash only makes each build a distinct URL for npm's cache.
 app.get(
   /^\/client\/cc-usage-client(-[\w.-]+)?\.tgz$/,
   asyncRoute(async (_req, res) => {
     const pkg = await clientPackage();
-    res.type('application/gzip').sendFile(pkg.file, { dotfiles: 'allow' }); // lives in server/.client-dist
+    res.type('application/gzip').sendFile(pkg.file, { dotfiles: 'allow' }); // may live in server/.client-dist
   }),
 );
 
-// The client script, so new users can download it straight from this server.
-app.get('/client/ccusage_report.py', (_req, res) =>
-  res.type('text/x-python').download(path.join(root, '..', 'ccusage_report.py'), 'ccusage_report.py'),
-);
-
-app.get('/vendor/chart.umd.js', (_req, res) => res.sendFile(path.join(root, 'node_modules/chart.js/dist/chart.umd.js')));
+app.get('/vendor/chart.umd.js', (_req, res) => res.sendFile(chartUmd));
 app.use(express.static(path.join(root, 'public')));
 
-app.use((err, req, res, _next) => {
+app.use((err, req, res, next) => {
+  if (res.headersSent) return next(err); // a streamed response failed mid-way; let Express close the socket
   const reject = (status, error) => {
     console.warn(`[${req.method} ${req.path}] rejected from ${req.ip}: ${error}`);
     res.status(status).json({ error });
   };
   if (err instanceof ValidationError) return reject(400, err.message);
-  if (err.type === 'entity.parse.failed') return reject(400, 'invalid JSON body');
-  if (err.type === 'entity.too.large') return reject(413, 'report too large');
+  if (err?.type === 'entity.parse.failed') return reject(400, 'invalid JSON body');
+  if (err?.type === 'entity.too.large') return reject(413, 'report too large');
+  // Other client errors raised by Express or body-parser (bad URL encoding, missing file, unsupported charset).
+  const status = err?.status ?? err?.statusCode;
+  if (status >= 400 && status < 500) return reject(status, err.expose ? err.message : 'bad request');
   console.error(err);
   res.status(500).json({ error: 'internal error' });
 });
 
 await connect();
 const server = app.listen(config.port, config.host, () => {
-  console.log(`cc-usage server on http://localhost:${config.port} (db ${config.mongoDb}` +
+  console.log(`cc-usage server listening on ${config.host}:${config.port} (db ${config.mongoDb}` +
     `${config.ingestToken ? ', ingest token required' : ''})`);
 });
 
 for (const signal of ['SIGINT', 'SIGTERM']) {
-  process.on(signal, () => {
-    server.close(() => close().then(() => process.exit(0)));
+  process.once(signal, () => {
+    setTimeout(() => process.exit(1), 10_000).unref(); // don't hang on a long export or keep-alive connection
+    server.closeIdleConnections();
+    server.close(async () => {
+      try {
+        await close();
+      } catch (error) {
+        console.error('[db] close failed', error);
+      }
+      process.exit(0);
+    });
   });
 }

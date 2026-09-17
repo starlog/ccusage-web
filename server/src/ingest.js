@@ -1,7 +1,8 @@
+import { dayCount, isCalendarDate } from './dates.js';
 import { db } from './db.js';
 
 export const TOKEN_FIELDS = ['inputTokens', 'outputTokens', 'cacheCreationTokens', 'cacheReadTokens'];
-const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+// Same rule as client/src/identity.js and public/app.js.
 const USER_RE = /^[\w.%+@-]{1,200}$/;
 const MACHINE_ID_RE = /^[A-Za-z0-9_-]{8,128}$/;
 const NAME_MAX = 50;
@@ -16,18 +17,23 @@ const fail = (message) => {
 
 function str(value, name, { max = 300, optional = false } = {}) {
   if (value == null && optional) return null;
-  if (typeof value !== 'string' || !value.trim() || value.length > max) fail(`${name} must be a non-empty string (<= ${max} chars)`);
+  if (typeof value !== 'string' || !value.trim() || value.length > max || CONTROL_RE.test(value)) {
+    fail(`${name} must be a non-empty string (<= ${max} chars) without control characters`);
+  }
   return value.trim();
 }
 
-function num(value, name) {
+/** Non-negative count (a safe integer by default), so totals can never overflow to Infinity. */
+function num(value, name, { integer = true, max = Number.MAX_SAFE_INTEGER } = {}) {
   const n = value ?? 0;
-  if (typeof n !== 'number' || !Number.isFinite(n) || n < 0) fail(`${name} must be a non-negative number`);
+  if (typeof n !== 'number' || !Number.isFinite(n) || n < 0 || n > max || (integer && !Number.isInteger(n))) {
+    fail(`${name} must be a non-negative ${integer ? 'integer' : 'number'} (<= ${max})`);
+  }
   return n;
 }
 
 /** Optional display name such as a Korean name ("조휘열"): NFC-normalized, whitespace collapsed. */
-function displayName(value) {
+function normalizeName(value) {
   if (value == null) return null;
   if (typeof value !== 'string') fail('name must be a string');
   const name = value.normalize('NFC').trim().replace(/\s+/gu, ' ');
@@ -37,7 +43,7 @@ function displayName(value) {
 }
 
 function day(value, name) {
-  if (typeof value !== 'string' || !DATE_RE.test(value)) fail(`${name} must be YYYY-MM-DD`);
+  if (!isCalendarDate(value)) fail(`${name} must be a valid YYYY-MM-DD date`);
   return value;
 }
 
@@ -52,6 +58,7 @@ function usage(row, name) {
   const out = {};
   for (const f of TOKEN_FIELDS) out[f] = num(row[f], `${name}.${f}`);
   out.totalTokens = TOKEN_FIELDS.reduce((sum, f) => sum + out[f], 0);
+  if (!Number.isSafeInteger(out.totalTokens)) fail(`${name} token total is too large`);
   return out;
 }
 
@@ -63,7 +70,7 @@ function timestamp(value, name) {
 }
 
 /**
- * Validates the body produced by ccusage_report.py. Only aggregate token and session counts are accepted:
+ * Validates the body produced by the cc-usage client. Only aggregate token and session counts are accepted:
  *   { schemaVersion, user, machineId, hostname, timezone, meta, range, periodTotal, dailyTotals[] }
  * Cost and the detail sections sent by older clients (models, projects, sessions, billing blocks) are ignored,
  * never stored.
@@ -75,13 +82,17 @@ export function parseReport(body) {
   if (!USER_RE.test(user)) fail('user may only contain letters, digits and . _ % + @ - (e.g. name@example.com)');
   const machineId = str(body.machineId, 'machineId', { max: 128 });
   if (!MACHINE_ID_RE.test(machineId)) fail('machineId must be 8-128 chars of [A-Za-z0-9_-]');
-  const name = displayName(body.name);
+  const name = normalizeName(body.name);
 
   const since = day(body.range?.since, 'range.since');
   const until = day(body.range?.until, 'range.until');
   if (since > until) fail('range.since must be <= range.until');
+  // Bounded window: storing a report replaces this machine's days in the range, so an unbounded range could wipe
+  // its whole history. Real clients send at most a few hundred days.
+  if (dayCount(since, until) > MAX_ROWS) fail(`range must be at most ${MAX_ROWS} days`);
 
   const dailyTotals = list(body.dailyTotals, 'dailyTotals').map((d, i) => {
+    if (!d || typeof d !== 'object' || Array.isArray(d)) fail(`dailyTotals[${i}] must be an object`);
     const date = day(d.date, `dailyTotals[${i}].date`);
     if (date < since || date > until) fail(`dailyTotals[${i}].date is outside range`);
     return { date, ...usage(d, `dailyTotals[${i}]`), sessions: num(d.sessions, `dailyTotals[${i}].sessions`) };
@@ -92,7 +103,7 @@ export function parseReport(body) {
   const periodTotal = {
     ...usage(pt, 'periodTotal'),
     activeDays: num(pt.activeDays, 'periodTotal.activeDays'),
-    cacheHitRate: num(pt.cacheHitRate, 'periodTotal.cacheHitRate'),
+    cacheHitRate: num(pt.cacheHitRate, 'periodTotal.cacheHitRate', { integer: false, max: 1 }),
     sessions: body.schemaVersion >= 2 ? num(pt.sessions, 'periodTotal.sessions') : dailyTotals.reduce((n, d) => n + d.sessions, 0),
   };
 
@@ -112,7 +123,7 @@ export function parseReport(body) {
 }
 
 /**
- * Stores a parsed report in two ways:
+ * Stores a parsed report in three collections:
  * - `reports`: every submission is kept as received (period total and per-day totals) as history.
  * - `users`: each user's latest reported display name.
  * - `daily`: the current view used for statistics, keyed by user + machine, so each computer a user reports
@@ -144,22 +155,22 @@ export async function storeReport(report) {
     await db.collection('users').updateOne({ user }, { $set: { name, updatedAt: now } }, { upsert: true });
   }
 
+  // One ordered round trip: upsert the active days first, then remove days in the window that are now zero.
+  // If the request fails part-way, a stale zero day may linger until the next upload, but no data is lost.
   const activeDays = report.dailyTotals.filter((d) => d.totalTokens > 0);
-  await db.collection('daily').deleteMany({
-    ...key,
-    date: { $gte: since, $lte: until, $nin: activeDays.map((d) => d.date) },
-  });
-  if (activeDays.length) {
-    await db.collection('daily').bulkWrite(
-      activeDays.map((d) => ({
+  await db.collection('daily').bulkWrite(
+    [
+      ...activeDays.map((d) => ({
         replaceOne: {
           filter: { ...key, date: d.date },
           replacement: { ...key, hostname, ...d, reportId: insertedId, updatedAt: now },
           upsert: true,
         },
       })),
-    );
-  }
+      { deleteMany: { filter: { ...key, date: { $gte: since, $lte: until, $nin: activeDays.map((d) => d.date) } } } },
+    ],
+    { ordered: true },
+  );
 
   return {
     reportId: insertedId,

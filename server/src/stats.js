@@ -1,11 +1,12 @@
 import { ObjectId } from 'mongodb';
+import { dateRange } from './dates.js';
 import { db } from './db.js';
 import { TOKEN_FIELDS } from './ingest.js';
 
-const USAGE_FIELDS = [...TOKEN_FIELDS, 'totalTokens', 'sessions'];
-
-const sumUsage = () => Object.fromEntries(USAGE_FIELDS.map((f) => [f, { $sum: `$${f}` }]));
-const keepUsage = () => Object.fromEntries(USAGE_FIELDS.map((f) => [f, 1]));
+// Shared with export.js so every sheet sums exactly the same fields as the dashboard.
+export const USAGE_FIELDS = [...TOKEN_FIELDS, 'totalTokens', 'sessions'];
+export const sumUsage = () => Object.fromEntries(USAGE_FIELDS.map((f) => [f, { $sum: `$${f}` }]));
+export const keepUsage = () => Object.fromEntries(USAGE_FIELDS.map((f) => [f, 1]));
 
 // Usage trend: slope of a least-squares line through each user's daily tokens. A trend line that rises or falls
 // by at least this share of the user's average daily usage over the range counts as increasing / decreasing.
@@ -63,7 +64,8 @@ export async function getStats({ since, until, user }) {
       .collection('reports')
       .aggregate([
         { $match: userMatch },
-        { $sort: { receivedAt: -1 } },
+        // Same order as the { user, machineId, receivedAt } index, so $first is still each machine's latest report.
+        { $sort: { user: 1, machineId: 1, receivedAt: -1 } },
         { $project: REPORT_LIST_PROJECTION },
         { $group: { _id: { user: '$user', machineId: '$machineId' }, last: { $first: '$$ROOT' }, count: { $sum: 1 } } },
         { $replaceRoot: { newRoot: { $mergeObjects: ['$last', { reports: '$count' }] } } },
@@ -92,21 +94,12 @@ export async function getStats({ since, until, user }) {
   };
 }
 
-/** Every day of [since, until] as YYYY-MM-DD. */
-export function dateRange(since, until) {
-  const DAY = 86_400_000;
-  const out = [];
-  for (let t = Date.parse(`${since}T00:00:00Z`); t <= Date.parse(`${until}T00:00:00Z`); t += DAY) {
-    out.push(new Date(t).toISOString().slice(0, 10));
-  }
-  return out;
-}
-
 /**
  * Least-squares line through daily values (x = day index 0..n-1). Returns the slope per day and the line's
  * rise over the whole range relative to the average day (`change`, e.g. 0.35 = +35%).
+ * public/app.js linearFit() draws the same line on the dashboard; change both together.
  */
-export function linearTrend(values) {
+function linearTrend(values) {
   const n = values.length;
   const mean = values.reduce((a, b) => a + b, 0) / n;
   const xMean = (n - 1) / 2;
@@ -117,7 +110,7 @@ export function linearTrend(values) {
     sxx += (x - xMean) ** 2;
   });
   const slope = sxx ? sxy / sxx : 0;
-  return { slope, mean, intercept: mean - slope * xMean, change: mean ? (slope * (n - 1)) / mean : 0 };
+  return { slope, mean, change: mean ? (slope * (n - 1)) / mean : 0 };
 }
 
 /** Classifies each user by the trend line through their daily tokens (days without usage count as 0). */
@@ -162,7 +155,11 @@ async function nameMap(match = {}) {
  */
 export async function listUsers() {
   const [ranked, all, names] = await Promise.all([
-    db.collection('daily').aggregate([{ $group: { _id: '$user', totalTokens: { $sum: '$totalTokens' } } }, { $sort: { totalTokens: -1, _id: 1 } }]).toArray(),
+    db
+      .collection('daily')
+      // Sorting by user first lets { user, totalTokens } answer the grouping from the index alone.
+      .aggregate([{ $sort: { user: 1 } }, { $group: { _id: '$user', totalTokens: { $sum: '$totalTokens' } } }, { $sort: { totalTokens: -1, _id: 1 } }])
+      .toArray(),
     db.collection('reports').distinct('user'),
     nameMap(),
   ]);

@@ -8,12 +8,13 @@
  * leave near the end. Reports are uploaded like a weekly cron job: consecutive 7-day windows per machine,
  * the last one ending today.
  *
- *   node scripts/seed-sample.js [--users 40] [--days 90] [--server http://localhost:3200] [--token TOKEN]
- *   node scripts/seed-sample.js --clean     # delete every @sample.local record from MongoDB
+ *   node server/scripts/seed-sample.js [--users 40] [--days 90] [--server http://localhost:3000] [--token TOKEN]
+ *   node server/scripts/seed-sample.js --clean     # delete every @sample.local record from MongoDB
  */
 import { parseArgs } from 'node:util';
 import { MongoClient } from 'mongodb';
-import { config } from '../src/config.js';
+import { assertConfig, config } from '../src/config.js';
+import { clientOptions } from '../src/db.js';
 
 const SAMPLE_DOMAIN = 'sample.local';
 
@@ -28,14 +29,18 @@ const { values: args } = parseArgs({
 });
 
 if (args.clean) {
-  const client = await new MongoClient(config.mongoUri).connect();
-  const db = client.db(config.mongoDb);
-  const filter = { user: { $regex: `@${SAMPLE_DOMAIN.replace('.', '\\.')}$` } };
-  for (const name of ['reports', 'daily', 'users']) {
-    const { deletedCount } = await db.collection(name).deleteMany(filter);
-    console.log(`${name}: deleted ${deletedCount}`);
+  assertConfig();
+  const client = await new MongoClient(config.mongoUri, clientOptions).connect();
+  try {
+    const db = client.db(config.mongoDb);
+    const filter = { user: { $regex: `@${SAMPLE_DOMAIN.replace('.', '\\.')}$` } };
+    for (const name of ['reports', 'daily', 'users']) {
+      const { deletedCount } = await db.collection(name).deleteMany(filter);
+      console.log(`${name}: deleted ${deletedCount}`);
+    }
+  } finally {
+    await client.close();
   }
-  await client.close();
   process.exit(0);
 }
 
@@ -170,7 +175,7 @@ function buildDaily(person, dates) {
   return perMachine;
 }
 
-/** The same body ccusage_report.py uploads for one machine and one window. */
+/** The same body the cc-usage client uploads for one machine and one window. */
 function report(person, machine, daily) {
   const totals = Object.fromEntries([...TOKEN_KEYS, 'totalTokens', 'sessions'].map((k) => [k, daily.reduce((s, r) => s + r[k], 0)]));
   const cacheBase = totals.cacheReadTokens + totals.cacheCreationTokens + totals.inputTokens;

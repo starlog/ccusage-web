@@ -1,7 +1,8 @@
 import ExcelJS from 'exceljs';
+import { config } from './config.js';
+import { dateRange } from './dates.js';
 import { db } from './db.js';
-import { TOKEN_FIELDS } from './ingest.js';
-import { dateRange, getStats, TREND_THRESHOLD } from './stats.js';
+import { getStats, keepUsage, sumUsage, TREND_THRESHOLD, USAGE_FIELDS } from './stats.js';
 
 const TOKEN_COLUMNS = [
   { header: '전체 토큰', key: 'totalTokens' },
@@ -15,9 +16,9 @@ const INTEGER = '#,##0';
 const PERCENT = '0.0%';
 const HEADER_FILL = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEFEFEC' } };
 
-const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+const REPORT_HISTORY_LIMIT = 20_000; // keeps one export's memory bounded
+const timezone = config.reportTimezone;
 const localTime = (value) => (value ? new Date(value).toLocaleString('sv-SE', { timeZone: timezone }) : '');
-const sumFields = () => Object.fromEntries([...TOKEN_FIELDS, 'totalTokens', 'sessions'].map((f) => [f, { $sum: `$${f}` }]));
 
 /**
  * Adds a sheet with a styled, frozen, filterable header. `columns` entries: { header, key, width, numFmt }.
@@ -53,8 +54,8 @@ export async function buildWorkbook({ since, until, user }) {
       .collection('daily')
       .aggregate([
         { $match: match },
-        { $group: { _id: { date: '$date', user: '$user' }, ...sumFields(), machines: { $addToSet: '$machineId' } } },
-        { $project: { _id: 0, date: '$_id.date', user: '$_id.user', ...Object.fromEntries([...TOKEN_FIELDS, 'totalTokens', 'sessions'].map((f) => [f, 1])), machines: { $size: '$machines' } } },
+        { $group: { _id: { date: '$date', user: '$user' }, ...sumUsage(), machines: { $addToSet: '$machineId' } } },
+        { $project: { _id: 0, date: '$_id.date', user: '$_id.user', ...keepUsage(), machines: { $size: '$machines' } } },
         { $sort: { date: 1, user: 1 } },
       ])
       .toArray(),
@@ -62,17 +63,19 @@ export async function buildWorkbook({ since, until, user }) {
       .collection('daily')
       .aggregate([
         { $match: match },
-        { $group: { _id: '$date', ...sumFields(), users: { $addToSet: '$user' } } },
-        { $project: { _id: 0, date: '$_id', ...Object.fromEntries([...TOKEN_FIELDS, 'totalTokens', 'sessions'].map((f) => [f, 1])), activeUsers: { $size: '$users' } } },
+        { $group: { _id: '$date', ...sumUsage(), users: { $addToSet: '$user' } } },
+        { $project: { _id: 0, date: '$_id', ...keepUsage(), activeUsers: { $size: '$users' } } },
       ])
       .toArray(),
     db
       .collection('reports')
       .find({ ...userMatch, since: { $lte: until }, until: { $gte: since } }, { projection: { dailyTotals: 0 } })
       .sort({ receivedAt: -1 })
-      .limit(20_000)
+      .limit(REPORT_HISTORY_LIMIT + 1)
       .toArray(),
   ]);
+  const historyTruncated = reports.length > REPORT_HISTORY_LIMIT;
+  if (historyTruncated) reports.length = REPORT_HISTORY_LIMIT;
 
   const names = new Map(stats.users.map((u) => [u.user, u.name]));
   for (const m of stats.machines) if (m.name) names.set(m.user, m.name);
@@ -112,6 +115,7 @@ export async function buildWorkbook({ since, until, user }) {
     ['추세: 감소', groupCounts.decreasing, INTEGER],
     [],
     ['참고', '비용, 프로젝트, 모델, 세션 내용은 수집하지 않습니다.'],
+    ...(historyTruncated ? [['보고 이력', `최근 ${REPORT_HISTORY_LIMIT.toLocaleString('ko-KR')}건만 포함했습니다.`]] : []),
   ];
   for (const [label, value, numFmt] of summaryRows) {
     const row = summary.addRow({ label, value });
@@ -162,7 +166,7 @@ export async function buildWorkbook({ since, until, user }) {
     workbook,
     '일별 합계',
     [{ header: '날짜', key: 'date', width: 12 }, ...tokenColumns(), { header: '세션', key: 'sessions', numFmt: INTEGER }, { header: '활성 사용자', key: 'activeUsers', numFmt: INTEGER }],
-    dates.map((date) => byDate.get(date) ?? { date, ...Object.fromEntries([...TOKEN_FIELDS, 'totalTokens', 'sessions', 'activeUsers'].map((f) => [f, 0])) }),
+    dates.map((date) => byDate.get(date) ?? { date, activeUsers: 0, ...Object.fromEntries(USAGE_FIELDS.map((f) => [f, 0])) }),
   );
 
   // 4. User x day, long format for pivot tables
