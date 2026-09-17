@@ -2,8 +2,10 @@
 
 Collects Claude Code usage from each person's machines and shows team statistics.
 
-- `ccusage_report.py` — runs [ccusage](https://github.com/ryoppippi/ccusage), writes a local report, and uploads it.
+- `client/` — Node.js client (`cc-usage`): bundles a pinned [ccusage](https://github.com/ryoppippi/ccusage), uploads
+  daily token totals, and registers a daily upload. Served by the server, so users install it with one `npx` line.
 - `server/` — Node.js (Express) server that stores reports in MongoDB and serves the dashboard.
+- `ccusage_report.py` — the earlier Python client (still works; writes detailed local reports).
 
 ## Server
 
@@ -38,33 +40,45 @@ API: `POST /api/reports`, `GET /api/stats?since=YYYY-MM-DD&until=YYYY-MM-DD[&use
 The client script is also served at `/client/ccusage_report.py`, and the dashboard's **클라이언트 설정 방법** button opens a
 step-by-step setup guide with copyable commands for new users.
 
-## Sender (every machine)
+## Client (every machine)
 
-Python 3.9+ and Node.js (for `npx ccusage@latest`), no pip packages.
+Needs Node.js 20+. Open the dashboard and click **클라이언트 설정 방법** for a ready-to-copy command, or run:
 
 ```bash
-# once per machine: remember sender id and server (~/.config/cc-usage/config.json)
-./ccusage_report.py --user felix.cho.kr@gmail.com --name 조휘열 --server http://SERVER:3200 --save-config
-./ccusage_report.py --show-config      # user, machine id, hostname, server
-
-# capture the last 7 days, save under ./reports/, and upload
-./ccusage_report.py
-./ccusage_report.py --days 30
-./ccusage_report.py --no-send          # local report only
-./ccusage_report.py --send-only reports/2026-09-10_2026-09-16/summary.json
+npx --yes http://SERVER:3200/client/cc-usage-client.tgz setup --user you@example.com --name 홍길동 --server http://SERVER:3200
 ```
 
-- **User id**: `--user` > `CCUSAGE_USER` > saved config > `git config user.email` > login name. Letters, digits and
-  `. _ % + @ -` only (an email works).
-- **Name** (optional): `--name 조휘열` / `CCUSAGE_NAME` / saved config. Any language, up to 50 characters; shown on the
-  dashboard next to the user id. The latest name sent wins; uploads without a name keep it. `--name "" --save-config`
-  clears the saved name.
-- **Machine id**: SHA-256 hash of the OS machine UUID (macOS `IOPlatformUUID`, Linux `/etc/machine-id`,
-  Windows `MachineGuid`), so the same user can upload from several computers; the server keeps each machine
-  separately and sums them. Override with `--machine-id` / `CCUSAGE_MACHINE_ID`.
-- **Token**: if the server sets `INGEST_TOKEN`, pass `--token` / `CCUSAGE_TOKEN` (or save it with `--save-config`).
-- Uploads contain only token and session totals (period and per day), no cost. The local `reports/` folder still
-  keeps the full detail (cost, models, projects, sessions, billing blocks) on your own machine.
+Running `npx … setup` (or `cc-usage setup`) with no options in a terminal asks for every value interactively (server
+check, user id, name, token when required, schedule time) with saved settings as defaults.
 
-To upload daily, add a cron entry, e.g. `0 19 * * * /path/to/ccusage_report.py >> /tmp/cc-usage.log 2>&1`.
+`setup` saves the settings (`~/.config/cc-usage/config.json`), installs the client into a stable folder
+(`~/.local/share/cc-usage`, Windows `%LOCALAPPDATA%\cc-usage`), uploads the last 7 days, and registers a daily
+upload at 13:00 (macOS launchd, Linux cron, Windows Task Scheduler) that runs node by absolute path.
+Options: `--time HH:MM`, `--no-schedule`, `--token`, `--dry-run`. Re-running `setup` updates the client and schedule.
+
+```bash
+cc-usage status      # settings, schedule, last upload, whether the server has a newer client
+cc-usage send        # upload the last 7 days now (--days 30, --dry-run prints the body instead)
+cc-usage uninstall   # remove the schedule and the install (--purge also deletes settings)
+```
+
+- **What is sent**: user id, optional name, machine id, hostname, and per-day/period token counts and sessions
+  started. No cost, models, projects, or conversation content. The last body sent is kept in
+  `~/.config/cc-usage/last-upload.json`.
+- **User id**: letters, digits and `. _ % + @ -` (an email). **Name**: any language, up to 50 characters.
+- **Machine id**: SHA-256 of the OS machine UUID (macOS `IOPlatformUUID`, Linux `/etc/machine-id`, Windows
+  `MachineGuid`), identical to the Python client, so switching clients keeps the same records.
+- **Token**: if the server sets `INGEST_TOKEN`, pass `--token`.
+- The server packs `client/` with `npm pack` on demand (rebuilt when sources change) and serves it at
+  `/client/cc-usage-client-<version>-<hash>.tgz`; the hash keeps npx from reusing an older cached package.
+
+### Python client (earlier)
+
+Python 3.9+ and Node.js. Same settings file, user id, name and machine id as the Node client.
+
+```bash
+./ccusage_report.py --user you@example.com --name 홍길동 --server http://SERVER:3200 --save-config
+./ccusage_report.py                    # last 7 days; detailed local report under ./reports/
+./ccusage_report.py --no-send | --show-config | --send-only reports/<range>/summary.json
+```
 # ccusage-web

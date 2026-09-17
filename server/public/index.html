@@ -13,7 +13,7 @@
     <header class="page-header">
       <div>
         <h1>Claude Code 사용량</h1>
-        <p class="subtitle"><code>ccusage_report.py</code>로 전송된 보고서 기반 팀 통계</p>
+        <p class="subtitle">각 컴퓨터의 <code>cc-usage</code> 클라이언트가 보낸 보고서 기반 팀 통계</p>
       </div>
       <div class="header-side">
         <p class="meta" id="meta"></p>
@@ -146,41 +146,29 @@
 
         <ol class="setup-steps">
           <li>
-            <h3>준비</h3>
-            <p>Claude Code를 사용하는 컴퓨터에 Python 3.9 이상과 Node.js(<code>npx</code>)가 있으면 됩니다. 추가로 설치할 패키지는 없습니다. Windows에서는 <code>./ccusage_report.py</code> 대신 <code>python ccusage_report.py</code>로 실행하세요.</p>
+            <h3>Node.js 설치</h3>
+            <p>Node.js 20 이상이 필요합니다. 터미널에서 <code>node -v</code>로 확인하고, 없으면 <a href="https://nodejs.org/ko/download" target="_blank" rel="noopener">nodejs.org</a>에서 설치하세요. Claude Code만 설치된 컴퓨터에는 Node.js가 없을 수 있습니다.</p>
           </li>
           <li>
-            <h3>스크립트 받기</h3>
-            <div class="code-block" data-code="download"></div>
-            <p class="hint">소스는 <a href="https://github.com/starlog/ccusage-web" target="_blank" rel="noopener">github.com/starlog/ccusage-web</a>에서도 볼 수 있습니다.</p>
-          </li>
-          <li>
-            <h3>최초 1회 설정</h3>
-            <p>사용자 ID, 이름, 서버 주소를 이 컴퓨터에 저장합니다 (<code>~/.config/cc-usage/config.json</code>). 사용하는 컴퓨터마다 한 번씩 실행하세요.</p>
+            <h3>한 줄 실행</h3>
+            <p>터미널(Windows는 PowerShell)에 붙여넣으면 설정 저장, 이 컴퓨터에 설치, 최근 7일 전송, 매일 자동 전송 등록까지 한 번에 끝납니다. 사용하는 컴퓨터마다 한 번씩 실행하세요.</p>
             <div class="code-block" data-code="setup"></div>
             <p class="hint" id="setup-token-hint" hidden>이 서버는 업로드 토큰이 필요합니다. 관리자에게 받은 토큰으로 <code>YOUR_TOKEN</code>을 바꾸세요.</p>
             <p class="hint" id="setup-origin-hint" hidden>지금 <code>localhost</code>로 접속 중입니다. 다른 컴퓨터에서는 <code>localhost</code> 대신 이 서버의 주소를 넣으세요.</p>
-          </li>
-          <li>
-            <h3>사용량 보내기</h3>
-            <div class="code-block" data-code="send"></div>
-            <p>성공하면 <code>[upload] … -&gt; 서버 주소: … tokens</code> 메시지가 나옵니다. 대시보드를 새로고침하면 반영됩니다. 같은 기간을 다시 보내도 중복되지 않습니다.</p>
-          </li>
-          <li>
-            <h3>설정 확인</h3>
-            <div class="code-block" data-code="check"></div>
-            <p>저장된 사용자 ID, 이름, 머신 ID, 서버 주소를 보여줍니다. 이름만 바꾸려면 <code>--name 새이름 --save-config</code>를 실행하세요.</p>
-          </li>
-          <li>
-            <h3>자동으로 보내기 <small>(선택, macOS·Linux)</small></h3>
-            <p><code>crontab -e</code>에 아래 줄을 추가하면 매일 저녁 7시에 최근 7일을 보냅니다. cron은 PATH가 짧으므로 <code>&lt;node 폴더&gt;</code>를 <code>dirname "$(which node)"</code> 결과로 바꾸세요.</p>
-            <div class="code-block" data-code="cron"></div>
+            <p class="hint">자동 전송은 매일 13:00에 macOS는 launchd, Linux는 cron, Windows는 작업 스케줄러로 실행됩니다. 시각은 <code>--time 09:30</code>으로 바꾸고, 자동 전송 없이 한 번만 보내려면 <code>--no-schedule</code>을 붙이세요.</p>
+            <p class="hint">옵션 없이 <code>setup</code>까지만 입력하면 서버 주소, 사용자 ID, 이름, 자동 전송 시각을 하나씩 물어보는 방식으로 설정할 수도 있습니다.</p>
           </li>
         </ol>
 
+        <section class="setup-manage">
+          <h3>설치 후 관리</h3>
+          <div class="code-block" data-code="manage"></div>
+          <p class="hint"><code>cc-usage</code>를 찾을 수 없다고 나오면 setup 마지막에 표시된 경로로 실행하세요. setup을 다시 실행하면 최신 버전으로 업데이트됩니다. 기존 Python 스크립트(<code>ccusage_report.py</code>)로 설정했던 컴퓨터도 같은 설정 파일을 쓰므로 기록이 그대로 이어집니다.</p>
+        </section>
+
         <section class="setup-privacy">
           <h3>서버로 보내는 정보</h3>
-          <p>사용자 ID, 이름, 머신 ID(OS 식별자의 해시), 호스트 이름, 그리고 기간 합계와 날짜별 토큰 수(입력·출력·캐시 생성·캐시 읽기)와 세션 수만 보냅니다. 비용, 프로젝트, 모델, 대화 내용은 보내지 않으며, 자세한 보고서는 내 컴퓨터의 <code>reports/</code> 폴더에만 남습니다.</p>
+          <p>사용자 ID, 이름, 머신 ID(OS 식별자의 해시), 호스트 이름, 그리고 기간 합계와 날짜별 토큰 수(입력·출력·캐시 생성·캐시 읽기)와 세션 수만 보냅니다. 비용, 프로젝트, 모델, 대화 내용은 보내지 않습니다. 마지막으로 보낸 내용은 <code>~/.config/cc-usage/last-upload.json</code>에서 확인할 수 있습니다.</p>
         </section>
       </div>
     </dialog>

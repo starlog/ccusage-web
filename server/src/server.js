@@ -2,6 +2,7 @@ import { timingSafeEqual } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
+import { clientPackage, packagePath } from './client-package.js';
 import { config } from './config.js';
 import { close, connect, ping } from './db.js';
 import { parseReport, storeReport, ValidationError } from './ingest.js';
@@ -74,8 +75,30 @@ app.get(
   }),
 );
 
-// Setup guide on the dashboard: whether uploads need a token (never the token itself).
-app.get('/api/client-info', (_req, res) => res.json({ tokenRequired: Boolean(config.ingestToken) }));
+// Setup guide and client: whether uploads need a token (never the token itself) and the current client package.
+app.get(
+  '/api/client-info',
+  asyncRoute(async (_req, res) => {
+    let client = null;
+    try {
+      const pkg = await clientPackage();
+      client = { version: pkg.version, package: packagePath(pkg) };
+    } catch (error) {
+      console.error(`[client] packaging failed: ${error.message}`);
+    }
+    res.json({ tokenRequired: Boolean(config.ingestToken), client });
+  }),
+);
+
+// Node.js client package for `npx <url> setup`. Any version/hash in the name serves the current package; the
+// hash only makes each build a distinct URL for npm's cache.
+app.get(
+  /^\/client\/cc-usage-client(-[\w.-]+)?\.tgz$/,
+  asyncRoute(async (_req, res) => {
+    const pkg = await clientPackage();
+    res.type('application/gzip').sendFile(pkg.file, { dotfiles: 'allow' }); // lives in server/.client-dist
+  }),
+);
 
 // The client script, so new users can download it straight from this server.
 app.get('/client/ccusage_report.py', (_req, res) =>

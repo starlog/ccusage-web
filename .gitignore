@@ -2,3 +2,4 @@ node_modules/
 server/.env
 reports/
 __pycache__/
+server/.client-dist/

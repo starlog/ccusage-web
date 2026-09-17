@@ -4,9 +4,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Overview
 
-Team Claude Code usage tracker, two parts that talk only over HTTP:
+Team Claude Code usage tracker; clients and server talk only over HTTP:
 
-- `ccusage_report.py` — client run on each person's machine. Calls the `ccusage` CLI, writes a detailed local report, and uploads **aggregate** numbers to the server.
+- `client/` — Node.js client (`cc-usage` bin) run on each person's machine, installed with one `npx <server>/client/…tgz setup` line. Uploads **aggregate** numbers and registers a daily upload.
+- `ccusage_report.py` — earlier Python client (same config, identity and payload; also writes detailed local reports). Kept working for existing users.
 - `server/` — Node.js (ESM, Express 5, official `mongodb` driver) API + static dashboard (vanilla JS + Chart.js, no build step). UI text is Korean.
 
 There is no test suite, linter, or build. Verify changes by syntax-checking and exercising the running server (see Commands).
@@ -26,7 +27,13 @@ node scripts/seed-sample.js --users 20 --days 30
 node --check src/stats.js public/app.js
 python3 -c "import ast; ast.parse(open('ccusage_report.py').read())"
 
-# Client (stdlib only; needs node/npx for ccusage)
+# Node client (from client/; npm install once for local runs)
+cd client && npm install
+node bin/cc-usage.js send --dry-run --server http://localhost:3200 --user you@example.com   # print the body, no upload
+# Test setup without touching real settings/schedules: override HOME (or XDG_CONFIG_HOME/XDG_DATA_HOME) and
+# CC_USAGE_SCHEDULE_NAME (always — the default launchd label/cron tag is shared with a real install on the same account); clean Linux end-to-end: docker run --add-host=host.docker.internal:host-gateway node:22-slim …
+
+# Python client (stdlib only; needs node/npx for ccusage)
 ./ccusage_report.py --user you@example.com --name 홍길동 --server http://localhost:3200 --save-config   # once per machine
 ./ccusage_report.py [--days 30] [--no-send] [--show-config] [--send-only reports/<range>/summary.json]
 
@@ -37,7 +44,16 @@ curl -s "localhost:3200/api/stats?since=2026-08-18&until=2026-09-16" | jq .trend
 
 The server does not auto-reload in `npm start`; restart after editing `server/src/*`. Files in `server/public/` are served statically (just reload the browser).
 
-## Client (`ccusage_report.py`)
+## Node client (`client/`)
+
+- `usage.js` runs the **pinned** `ccusage` dependency (`20.0.20`, resolved via `require.resolve('ccusage/package.json')`) as `node <bin> claude daily|session --json --offline`, and builds exactly the Python client's payload (verified identical for the same range). Bump the pin deliberately and re-verify the JSON shape.
+- `identity.js` mirrors the Python rules: ASCII `USER_RE`, name normalization, and `machineId = sha256("cc-usage:" + OS UUID)[:32]` — changing any of these splits a person's records.
+- `setup` with none of the value options in a TTY runs `prompt.js` (asks server → user → name → token if required → schedule → confirm; Ctrl+C/"n" exits 130 without changes), then continues as the flag path. Without a TTY it keeps the flag behavior.
+- `setup` (in `cli.js`): check `/api/client-info` → save config → `install.js` runs `npm install --prefix <DATA_DIR> <server tarball>` (npx caches are temporary) and writes a `cc-usage` wrapper (only if the file is missing or ours) → first `send` → `schedule.js` registers launchd / cron / schtasks with absolute `process.execPath` + installed entry + `send --log`. Schedule failure is a warning, not fatal. State for `status` lives in `state.json`; the last body sent in `last-upload.json`.
+- Windows scheduling and install are implemented but untested; macOS launchd and Linux cron were verified end to end.
+- Server side: `server/src/client-package.js` runs `npm pack` in `client/` into `server/.client-dist/` when sources are newer than the build; `/api/client-info` returns `client.package` with version+hash in the filename so npx never reuses a stale cache.
+
+## Python client (`ccusage_report.py`)
 
 - **ccusage invocation**: defaults to `npx --yes ccusage@latest` (`--bin`/`CCUSAGE_BIN` to override). ccusage ≥18 nests Claude reports under a `claude` subcommand; `Ccusage._has_claude_subcommand()` detects this from `--help`. Old global installs (15.x) produce wrong session grouping — prefer latest.
 - Runs four JSON reports: `daily --breakdown`, `daily --instances` (per project), `session --breakdown`, `blocks`. **Sessions are fetched without `--since/--until`** because ccusage's session date filter drops sessions; `summarize()` filters them locally by first/last activity date.
@@ -59,7 +75,7 @@ The server does not auto-reload in `npm start`; restart after editing `server/sr
 
 ## Dashboard (`server/public`)
 
-- Header button (and the empty state) opens the **클라이언트 설정 방법** `<dialog>`: email/name inputs fill copyable shell commands (download from `/client/ccusage_report.py`, `--save-config`, send, `--show-config`, cron). Keep its commands and privacy text in sync with the client's options and payload.
+- Header button (and the empty state) opens the **클라이언트 설정 방법** `<dialog>`: email/name inputs fill the one-line `npx … setup` command (package path from `/api/client-info`) plus `cc-usage status|send|uninstall`. Commands stay single-line (PowerShell has no `\` continuation); `setCode` keeps words unbroken when wrapping. Keep its commands and privacy text in sync with the client's options and payload.
 - Single page; filters (7/30/90 days/custom, user) live in the URL query and re-fetch `/api/stats`; previous render is dimmed while loading.
 - Charts: 일별 토큰 (stacked by user, area/bar toggle), 사용자별 토큰량 (horizontal bars), 사용량 추세 (group totals, as a 7-day moving average for ranges ≥14 days, plus each group's straight trend line; line/area toggle), plus trend-group tables and users/machines tables. Every chart has a table view (`renderChartTable`); helper datasets flagged `trendLine` are excluded from legend, tooltip and table.
 - Styling follows a data-viz convention: colors are CSS custom properties with separate light/dark values (charts are rebuilt on color-scheme change), categorical slots never cycle — beyond 8 users the rest fold into "기타", and color follows the entity (all-time rank), not the filtered rank. Chart-type choices persist in `localStorage` with try/catch.

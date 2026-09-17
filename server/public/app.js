@@ -560,23 +560,40 @@ const USER_ID_RE = /^[\w.%+@-]{1,200}$/; // same rule as the client and the serv
 /** Quotes a value for a POSIX shell only when needed (e.g. a Korean name with spaces). */
 const shellQuote = (value) => (/^[\w@.%+\-/:=]+$/.test(value) ? value : `'${value.replace(/'/g, `'\\''`)}'`);
 
-function setupCommands({ user, name, tokenRequired }) {
+function setupCommands({ user, name, tokenRequired, client }) {
   const origin = location.origin;
-  const setup = [
-    './ccusage_report.py',
-    `--user ${shellQuote(user || 'you@example.com')}`,
-    ...(name ? [`--name ${shellQuote(name)}`] : []),
-    `--server ${origin}`,
-    ...(tokenRequired ? ['--token YOUR_TOKEN'] : []),
-    '--save-config',
-  ];
+  const setup = client === undefined
+    ? '설치 명령을 불러오는 중입니다…'
+    : client
+    ? [
+        `npx --yes ${origin}${client.package} setup`,
+        `--user ${shellQuote(user || 'you@example.com')}`,
+        ...(name ? [`--name ${shellQuote(name)}`] : []),
+        `--server ${origin}`,
+        ...(tokenRequired ? ['--token YOUR_TOKEN'] : []),
+      ].join(' ')
+    : '클라이언트 패키지를 준비하지 못했습니다. 서버 로그를 확인하세요.';
   return {
-    download: `mkdir -p ~/cc-usage && cd ~/cc-usage\ncurl -fsSLO ${origin}/client/ccusage_report.py\nchmod +x ccusage_report.py`,
-    setup: setup.join(' \\\n  '),
-    send: './ccusage_report.py            # 최근 7일\n./ccusage_report.py --days 30  # 최근 30일',
-    check: './ccusage_report.py --show-config',
-    cron: '0 19 * * * cd $HOME/cc-usage && PATH=<node 폴더>:/usr/bin:/bin ./ccusage_report.py >> $HOME/cc-usage/upload.log 2>&1',
+    // One line on purpose: backslash continuations do not work in PowerShell.
+    setup,
+    manage: [
+      'cc-usage status       # 설정, 자동 전송, 마지막 전송 결과',
+      'cc-usage send         # 지금 최근 7일 보내기 (--days 30)',
+      'cc-usage uninstall    # 자동 전송 해제 (--purge: 설정까지 삭제)',
+    ].join('\n'),
   };
+}
+
+/**
+ * Shows a command with each word kept whole: browsers may break a line after "-", which would split options
+ * like --user across lines. Copying still reads the plain text.
+ */
+function setCode(code, text) {
+  code.replaceChildren(
+    ...text.split(/(\s+)/).map((part) =>
+      /^\s*$/.test(part) ? document.createTextNode(part) : Object.assign(document.createElement('span'), { className: 'word', textContent: part }),
+    ),
+  );
 }
 
 async function copyText(text) {
@@ -606,7 +623,7 @@ function initSetupDialog() {
   const nameInput = $('#setup-name');
   const note = $('#setup-user-note');
   const defaultNote = note.innerHTML;
-  const info = { tokenRequired: false };
+  const info = { tokenRequired: false, client: undefined }; // undefined: still loading, null: unavailable
 
   // Code blocks with a copy button; the text is filled in by render().
   for (const block of $$('[data-code]', dialog)) {
@@ -629,8 +646,8 @@ function initSetupDialog() {
     note.classList.toggle('error', invalid);
     if (invalid) note.textContent = '사용자 ID에는 영문, 숫자와 . _ % + @ - 만 쓸 수 있습니다. 한글 이름은 이름 칸에 입력하세요.';
     else note.innerHTML = defaultNote;
-    const commands = setupCommands({ user: invalid ? '' : user, name, tokenRequired: info.tokenRequired });
-    for (const block of $$('[data-code]', dialog)) $('code', block).textContent = commands[block.dataset.code];
+    const commands = setupCommands({ user: invalid ? '' : user, name, ...info });
+    for (const block of $$('[data-code]', dialog)) setCode($('code', block), commands[block.dataset.code]);
     $('#setup-token-hint').hidden = !info.tokenRequired;
     $('#setup-origin-hint').hidden = !['localhost', '127.0.0.1', '[::1]'].includes(location.hostname);
   };
@@ -656,9 +673,13 @@ function initSetupDialog() {
   getJson('api/client-info')
     .then((result) => {
       info.tokenRequired = Boolean(result.tokenRequired);
+      info.client = result.client;
       render();
     })
-    .catch(() => {});
+    .catch(() => {
+      info.client = null;
+      render();
+    });
   render();
 }
 

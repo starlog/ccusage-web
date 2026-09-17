@@ -358,7 +358,11 @@ body:has(dialog[open]) {
   box-shadow: inset 0 0 0 1px var(--border);
   font: 12.5px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   white-space: pre-wrap;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word; /* wrap at spaces; split only a word that cannot fit (a long URL) */
+}
+
+.code-block .word {
+  white-space: nowrap;
 }
 
 .code-block .copy {
@@ -367,6 +371,17 @@ body:has(dialog[open]) {
   right: 7px;
   height: 26px;
   padding: 0 10px;
+  font-size: 12px;
+}
+
+.setup-manage {
+  padding: 14px 0 16px;
+  border-top: 1px solid var(--grid);
+}
+
+.setup-manage .hint {
+  margin-top: 6px;
+  color: var(--text-muted);
   font-size: 12px;
 }
 
