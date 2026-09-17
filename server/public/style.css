@@ -479,6 +479,13 @@ body:has(dialog[open]) {
   max-width: 100%;
 }
 
+.export-link {
+  display: inline-flex;
+  align-items: center;
+  margin-left: auto;
+  text-decoration: none;
+}
+
 /* ---------------------------------------------------------------- layout */
 
 #content {

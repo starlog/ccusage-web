@@ -36,7 +36,11 @@ sessions started, for the whole period and for each day. Cost and model, project
 are never uploaded; if an older client sends them, the server discards them.
 
 API: `POST /api/reports`, `GET /api/stats?since=YYYY-MM-DD&until=YYYY-MM-DD[&user=]`,
-`GET /api/reports[?user=&machineId=&limit=]`, `GET /api/reports/:id`, `GET /api/users`, `GET /api/client-info`, `GET /api/health`.
+`GET /api/export.xlsx?since=&until=[&user=]`, `GET /api/reports[?user=&machineId=&limit=]`, `GET /api/reports/:id`,
+`GET /api/users`, `GET /api/client-info`, `GET /api/health`.
+
+The dashboard's **엑셀 다운로드** button downloads `export.xlsx` for the current filters, with sheets 요약, 사용자별,
+일별 합계, 사용자별 일별 (long format for pivots), 일별 토큰표 (users × dates), 추세 그룹, 머신, 보고 이력.
 The client script is also served at `/client/ccusage_report.py`, and the dashboard's **클라이언트 설정 방법** button opens a
 step-by-step setup guide with copyable commands for new users.
 
@@ -54,7 +58,8 @@ check, user id, name, token when required, schedule time) with saved settings as
 `setup` saves the settings (`~/.config/cc-usage/config.json`), installs the client into a stable folder
 (`~/.local/share/cc-usage`, Windows `%LOCALAPPDATA%\cc-usage`), uploads the last 7 days, and registers a daily
 upload at 13:00 (macOS launchd, Linux cron, Windows Task Scheduler) that runs node by absolute path.
-Options: `--time HH:MM`, `--no-schedule`, `--token`, `--dry-run`. Re-running `setup` updates the client and schedule.
+Options: `--time HH:MM`, `--no-schedule` (still installs the `cc-usage` command; removes an existing schedule), `--token`,
+`--dry-run`. Re-running `setup` updates the client and schedule.
 
 ```bash
 cc-usage status      # settings, schedule, last upload, whether the server has a newer client

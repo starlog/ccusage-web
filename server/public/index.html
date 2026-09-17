@@ -36,6 +36,7 @@
       <select name="user" aria-label="사용자">
         <option value="">전체 사용자</option>
       </select>
+      <a class="button export-link" id="export-link" href="api/export.xlsx" download title="현재 기간과 사용자 필터로 자세한 보고서를 받습니다">엑셀 다운로드</a>
     </form>
 
     <main id="content">
@@ -155,7 +156,7 @@
             <div class="code-block" data-code="setup"></div>
             <p class="hint" id="setup-token-hint" hidden>이 서버는 업로드 토큰이 필요합니다. 관리자에게 받은 토큰으로 <code>YOUR_TOKEN</code>을 바꾸세요.</p>
             <p class="hint" id="setup-origin-hint" hidden>지금 <code>localhost</code>로 접속 중입니다. 다른 컴퓨터에서는 <code>localhost</code> 대신 이 서버의 주소를 넣으세요.</p>
-            <p class="hint">자동 전송은 매일 13:00에 macOS는 launchd, Linux는 cron, Windows는 작업 스케줄러로 실행됩니다. 시각은 <code>--time 09:30</code>으로 바꾸고, 자동 전송 없이 한 번만 보내려면 <code>--no-schedule</code>을 붙이세요.</p>
+            <p class="hint">자동 전송은 매일 13:00에 macOS는 launchd, Linux는 cron, Windows는 작업 스케줄러로 실행됩니다. 시각은 <code>--time 09:30</code>으로 바꾸고, 자동 전송 없이 설치만 하려면 <code>--no-schedule</code>을 붙이세요(필요할 때 <code>cc-usage send</code>로 보냅니다).</p>
             <p class="hint">옵션 없이 <code>setup</code>까지만 입력하면 서버 주소, 사용자 ID, 이름, 자동 전송 시각을 하나씩 물어보는 방식으로 설정할 수도 있습니다.</p>
           </li>
         </ol>

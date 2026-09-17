@@ -5,6 +5,7 @@ import express from 'express';
 import { clientPackage, packagePath } from './client-package.js';
 import { config } from './config.js';
 import { close, connect, ping } from './db.js';
+import { buildWorkbook } from './export.js';
 import { parseReport, storeReport, ValidationError } from './ingest.js';
 import { getReport, getStats, listReports, listUsers } from './stats.js';
 
@@ -36,14 +37,40 @@ app.post(
   }),
 );
 
+/** since/until (YYYY-MM-DD) and optional user from the query string, or null after sending a 400. */
+function rangeQuery(req, res) {
+  const { since, until, user } = req.query;
+  if (typeof since !== 'string' || typeof until !== 'string' || !DATE_RE.test(since) || !DATE_RE.test(until) || since > until) {
+    res.status(400).json({ error: 'since and until (YYYY-MM-DD, since <= until) are required' });
+    return null;
+  }
+  if (Date.parse(`${until}T00:00:00Z`) - Date.parse(`${since}T00:00:00Z`) > 3 * 366 * 86_400_000) {
+    res.status(400).json({ error: 'range must be at most 3 years' });
+    return null;
+  }
+  return { since, until, user: typeof user === 'string' && user ? user : undefined };
+}
+
 app.get(
   '/api/stats',
   asyncRoute(async (req, res) => {
-    const { since, until, user } = req.query;
-    if (!DATE_RE.test(since ?? '') || !DATE_RE.test(until ?? '') || since > until) {
-      return res.status(400).json({ error: 'since and until (YYYY-MM-DD, since <= until) are required' });
-    }
-    res.json(await getStats({ since, until, user: typeof user === 'string' && user ? user : undefined }));
+    const range = rangeQuery(req, res);
+    if (range) res.json(await getStats(range));
+  }),
+);
+
+// Detailed multi-sheet Excel report for the same filters as the dashboard.
+app.get(
+  '/api/export.xlsx',
+  asyncRoute(async (req, res) => {
+    const range = rangeQuery(req, res);
+    if (!range) return;
+    const workbook = await buildWorkbook(range);
+    const suffix = range.user ? `_${range.user.replace(/[^\w.@-]/g, '_')}` : '';
+    res.attachment(`claude-code-usage_${range.since}_${range.until}${suffix}.xlsx`);
+    res.type('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    await workbook.xlsx.write(res);
+    res.end();
   }),
 );
 

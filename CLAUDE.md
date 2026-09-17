@@ -71,6 +71,7 @@ The server does not auto-reload in `npm start`; restart after editing `server/sr
   - **Trend groups**: per user, a least-squares line through daily `totalTokens` over the range (missing days = 0). `change = slope*(n-1)/mean`; `>= +TREND_THRESHOLD` (0.2) → `increasing`, `<= -0.2` → `decreasing`, else `steady` (UI label 일정). Needs ≥3 days. The client-side `linearFit` in `app.js` mirrors this for drawing group trend lines — keep them consistent.
   - `listUsers` orders users by all-time tokens; the dashboard assigns categorical color slots from this order.
 - `server.js` — routes (`POST /api/reports` with optional bearer `INGEST_TOKEN`, `GET /api/stats`, `/api/reports`, `/api/reports/:id`, `/api/users`, `/api/client-info` (only `tokenRequired`, never the token), `/api/health`), serves the client script at `/client/ccusage_report.py` (read from the repo root), `public/` and `node_modules/chart.js` at `/vendor/chart.umd.js`. Rejected uploads are logged.
+- `export.js` — `GET /api/export.xlsx` (same `since/until/user` validation as `/api/stats` via `rangeQuery`) builds an `exceljs` workbook: it reuses `getStats` and adds user×day and per-day aggregations plus overlapping `reports`. Totals across the summary, users, daily, user-daily and matrix sheets must agree. `uuid` is pinned via `overrides` to clear exceljs's audit warning.
 - `db.js` creates indexes on startup (unique `daily{user,machineId,date}`).
 
 ## Dashboard (`server/public`)

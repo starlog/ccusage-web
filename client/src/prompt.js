@@ -121,7 +121,7 @@ export async function promptSetup({ config, state, normalizeServer }) {
     console.log(`  서버       ${server}`);
     console.log(`  사용자     ${name ? `${name} <${user}>` : user}`);
     if (info.tokenRequired) console.log('  토큰       입력함');
-    console.log(`  자동 전송  ${schedule ? `매일 ${time}` : '사용 안 함 (지금 한 번만 보냄)'}`);
+    console.log(`  자동 전송  ${schedule ? `매일 ${time}` : '사용 안 함 (설치 후 필요할 때 cc-usage send로 보냄)'}`);
     if (!(await askYesNo(ask, '\n이대로 진행할까요? (Y/n): ', true))) throw new SetupCancelled();
     console.log('');
 

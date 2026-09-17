@@ -700,6 +700,7 @@ async function load() {
   try {
     const params = new URLSearchParams({ since: filters.since, until: filters.until });
     if (filters.user) params.set('user', filters.user);
+    $('#export-link').href = `api/export.xlsx?${params}`; // the download follows the current filters
     const stats = await getJson(`api/stats?${params}`);
     if (seq !== requestSeq) return;
     state.stats = stats;

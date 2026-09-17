@@ -1,9 +1,10 @@
 import fs from 'node:fs';
+import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { loadConfig, loadState, resolveSettings, saveConfig, updateState } from './config.js';
 import { defaultUser, machineId, normalizeName, validateUser } from './identity.js';
 import { installFromServer, installedVersion, removeInstall, writeWrapper } from './install.js';
-import { CONFIG_FILE, INSTALLED_ENTRY, LAST_UPLOAD_FILE, LOG_FILE, STATE_FILE } from './paths.js';
+import { CONFIG_FILE, INSTALLED_ENTRY, LAST_UPLOAD_FILE, LOG_FILE, STATE_FILE, WRAPPER_FILE } from './paths.js';
 import { promptSetup, SetupCancelled } from './prompt.js';
 import { parseTime, scheduler } from './schedule.js';
 import { clientInfo, packageUrl, uploadReport } from './server-api.js';
@@ -21,7 +22,7 @@ const HELP = `cc-usage ${CLIENT_VERSION} — Claude Code 사용량을 팀 사용
   cc-usage setup --user <이메일> [--name <이름>] --server <서버 주소> [--token <토큰>] [--time HH:MM]
       설정 저장, 이 컴퓨터에 설치, 첫 전송, 매일 자동 전송 등록을 한 번에 합니다.
       --time        자동 전송 시각 (기본 ${DEFAULT_TIME}, 꺼져 있던 경우 macOS는 켜질 때 보냅니다)
-      --no-schedule 자동 전송을 등록하지 않고 설정 저장과 첫 전송만 합니다
+      --no-schedule 자동 전송을 쓰지 않습니다 (이미 등록되어 있으면 해제). 설치와 첫 전송은 합니다
       --dry-run     아무것도 바꾸지 않고 할 일만 보여줍니다
   cc-usage send [--days ${DEFAULT_DAYS}] [--until YYYY-MM-DD] [--dry-run]
       최근 N일 사용량을 보냅니다. 같은 기간을 다시 보내도 서버에서 중복되지 않습니다.
@@ -151,7 +152,7 @@ async function setup(cliOptions) {
   const schedule = !options['no-schedule'];
   const time = parseTime(options.time ?? loadState().schedule?.time ?? DEFAULT_TIME);
   const days = parseDays(options.days);
-  const steps = schedule ? 4 : 2;
+  const steps = 4;
 
   console.log(`[1/${steps}] 서버 확인: ${server}`);
   const info = await clientInfo(server);
@@ -165,10 +166,9 @@ async function setup(cliOptions) {
   if (options['dry-run']) {
     const { token: savedToken, ...shown } = nextConfig;
     console.log(`\n저장할 설정 (${CONFIG_FILE}):\n${JSON.stringify({ ...shown, ...(savedToken ? { token: '***' } : {}) }, null, 2)}`);
-    if (schedule) {
-      console.log(`\n설치: ${tarball} → ${INSTALLED_ENTRY}`);
-      console.log(`\n자동 전송 (${scheduler().kind}, 매일 ${time.text}):\n${scheduler().preview(INSTALLED_ENTRY, time)}`);
-    }
+    console.log(`\n설치: ${tarball} → ${INSTALLED_ENTRY}`);
+    if (schedule) console.log(`\n자동 전송 (${scheduler().kind}, 매일 ${time.text}):\n${scheduler().preview(INSTALLED_ENTRY, time)}`);
+    else console.log('\n자동 전송: 사용 안 함 (등록되어 있으면 해제)');
     console.log('\n--dry-run이라 아무것도 바꾸지 않았습니다.');
     return 0;
   }
@@ -176,16 +176,13 @@ async function setup(cliOptions) {
   saveConfig(nextConfig);
   console.log(`      설정 저장: ${CONFIG_FILE}`);
 
-  let entry = null;
-  let wrapper = null;
-  if (schedule) {
-    console.log(`[2/${steps}] 이 컴퓨터에 설치: ${tarball}`);
-    entry = installFromServer(tarball);
-    wrapper = writeWrapper(entry);
-    console.log(`      설치 위치: ${entry}`);
-  }
+  // Always install and create the `cc-usage` command, so status/send/uninstall work with or without the schedule.
+  console.log(`[2/${steps}] 이 컴퓨터에 설치: ${tarball}`);
+  const entry = installFromServer(tarball);
+  const wrapper = writeWrapper(entry);
+  console.log(`      설치 위치: ${entry}`);
 
-  console.log(`[${schedule ? 3 : 2}/${steps}] 최근 ${days}일 사용량 전송`);
+  console.log(`[3/${steps}] 최근 ${days}일 사용량 전송`);
   const sendCode = await send({ days: String(days) }, logger());
 
   let scheduleError = null;
@@ -198,15 +195,36 @@ async function setup(cliOptions) {
       scheduleError = error;
       console.error(`      자동 전송 등록 실패: ${error.message}`);
     }
+  } else {
+    // Choosing no schedule also removes an earlier registration, so the choice matches what actually runs.
+    console.log(`[4/${steps}] 자동 전송: 사용 안 함`);
+    if (scheduler().unregister()) console.log('      기존 자동 전송 등록을 해제했습니다.');
+    updateState({ schedule: null });
   }
 
+  const command = wrapper?.onPath ? 'cc-usage' : wrapper ? wrapper.file : `"${process.execPath}" "${entry}"`;
   console.log('\n설정을 마쳤습니다.');
   console.log(`  사용자     ${name ? `${name} <${user}>` : user}`);
   console.log(`  서버       ${server}`);
-  if (schedule) {
-    console.log(`  자동 전송  ${scheduleError ? '등록 안 됨 (위 오류 참고, 해결 후 setup을 다시 실행하세요)' : `매일 ${time.text}, 로그 ${LOG_FILE}`}`);
-    const command = wrapper?.onPath ? 'cc-usage' : wrapper ? wrapper.file : `"${process.execPath}" "${entry}"`;
-    console.log(`  관리 명령  ${command} status | send | uninstall`);
+  console.log(
+    `  자동 전송  ${
+      !schedule
+        ? `사용 안 함 (필요할 때 ${command} send로 보내세요)`
+        : scheduleError
+          ? '등록 안 됨 (위 오류 참고, 해결 후 setup을 다시 실행하세요)'
+          : `매일 ${time.text}, 로그 ${LOG_FILE}`
+    }`,
+  );
+  console.log(`  관리 명령  ${command} status | send | uninstall`);
+  if (wrapper && !wrapper.onPath) {
+    const dir = path.dirname(wrapper.file);
+    console.log(
+      process.platform === 'win32'
+        ? `\n짧게 cc-usage로 실행하려면 ${dir} 폴더를 PATH 환경 변수에 추가하세요.`
+        : `\n짧게 cc-usage로 실행하려면 셸 설정 파일(~/.zshrc 또는 ~/.bashrc)에 다음 줄을 추가하고 새 터미널을 여세요:\n  export PATH="${dir}:$PATH"`,
+    );
+  } else if (!wrapper) {
+    console.log(`\n${WRAPPER_FILE}에 다른 파일이 있어 cc-usage 명령을 만들지 않았습니다. 위 관리 명령의 전체 경로를 사용하세요.`);
   }
   if (sendCode !== 0) console.log('\n첫 전송은 실패했습니다. 위 오류를 확인한 뒤 send를 다시 실행하세요.');
   return sendCode || (scheduleError ? 1 : 0);
